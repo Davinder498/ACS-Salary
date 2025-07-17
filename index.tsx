@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import ReactDOM from 'react-dom/client';
 import jsPDF from 'jspdf';
@@ -2095,35 +2096,38 @@ const App = () => {
 
     const handleSaveShiftsForDate = async (date: Date, newShiftsForEditedDate: Shift[]) => {
         if (!user) return;
-        
+    
         const isoDate = toISODateString(date);
         const isoPrevDate = toISODateString(addDays(date, -1));
-
         const updatedShifts = JSON.parse(JSON.stringify(user.shifts || {}));
-
-        // Step 1: Identify which shifts on adjacent days are NOT being edited and should be preserved.
-        // A shift on isoDate is preserved if it's a Night shift (it's displayed on the *next* day).
-        const shiftsToPreserveOnIsoDate = (updatedShifts[isoDate] || []).filter((s: Shift) => s.type === 'N');
-        
-        // A shift on isoPrevDate is preserved if it's NOT a Night shift (it's displayed on isoPrevDate).
-        const shiftsToPreserveOnIsoPrevDate = (updatedShifts[isoPrevDate] || []).filter((s: Shift) => s.type !== 'N');
-
-        // Step 2: Partition the new shifts from the editor based on where they should be stored.
-        const newShiftsForIsoDate = newShiftsForEditedDate.filter(s => s.type === 'D' || s.type === 'A' || s.type === 'O');
-        const newShiftsForIsoPrevDate = newShiftsForEditedDate.filter(s => s.type === 'N');
-
-        // Step 3: Reconstruct the shift arrays for the two affected dates by combining preserved and new shifts.
-        updatedShifts[isoDate] = [...shiftsToPreserveOnIsoDate, ...newShiftsForIsoDate];
-        updatedShifts[isoPrevDate] = [...shiftsToPreserveOnIsoPrevDate, ...newShiftsForIsoPrevDate];
-        
-        // Step 4: Clean up by removing any date keys that now have empty shift arrays.
+    
+        // 1. Separate the new shifts from the editor into Night shifts and others.
+        // Day, Afternoon, and Off shifts are stored on the date they occur.
+        const newDayShifts = newShiftsForEditedDate.filter(s => s.type !== 'N');
+        // Night shifts are stored on the date they *begin*, which is the day before they are displayed.
+        const newNightShifts = newShiftsForEditedDate.filter(s => s.type === 'N');
+    
+        // 2. Update shifts for the date that was edited (isoDate).
+        // We need to keep any night shifts that were already saved on this date,
+        // because they belong to the *next* day's schedule.
+        // All other shifts (D, A, O) for this date are replaced by the new ones from the editor.
+        const preservedNightShiftsOnIsoDate = (updatedShifts[isoDate] || []).filter((s: Shift) => s.type === 'N');
+        updatedShifts[isoDate] = [...preservedNightShiftsOnIsoDate, ...newDayShifts];
+    
+        // 3. Update shifts for the previous day (isoPrevDate).
+        // We need to keep any Day, Afternoon, or Off shifts that were already saved on the previous day.
+        // The Night shifts for the day we edited are stored here, so we replace any old ones.
+        const preservedDayShiftsOnIsoPrevDate = (updatedShifts[isoPrevDate] || []).filter((s: Shift) => s.type !== 'N');
+        updatedShifts[isoPrevDate] = [...preservedDayShiftsOnIsoPrevDate, ...newNightShifts];
+    
+        // 4. Clean up any date entries that no longer have shifts.
         if (updatedShifts[isoDate]?.length === 0) {
             delete updatedShifts[isoDate];
         }
         if (updatedShifts[isoPrevDate]?.length === 0) {
             delete updatedShifts[isoPrevDate];
         }
-
+    
         await api.saveUserData(user.uid, { shifts: updatedShifts });
         setUser(prev => prev ? ({ ...prev, shifts: updatedShifts }) : null);
     };
