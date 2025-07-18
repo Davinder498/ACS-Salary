@@ -1,12 +1,15 @@
 
 
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import ReactDOM from 'react-dom/client';
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
-import { createClient } from '@supabase/supabase-js';
+import React from "react";
+import ReactDOM from "react-dom/client";
+import App from "./App";
 
-import './index.css';
+ReactDOM.createRoot(document.getElementById("root")!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);
+
 
 
 // --- Supabase logic moved from supabase.ts to fix browser loading issues ---
