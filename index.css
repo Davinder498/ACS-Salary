@@ -285,7 +285,7 @@ input:focus, select:focus {
   color: var(--text-secondary);
 }
 
-/* --- Auth Screen --- */
+/* --- Auth & Configuration Screens --- */
 .auth-container {
   display: flex;
   justify-content: center;
@@ -359,6 +359,43 @@ input:focus, select:focus {
   transform: none;
 }
 
+/* --- Configuration Screen --- */
+.config-instructions {
+    margin-top: 2rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border-color);
+}
+.config-instructions p {
+    text-align: left;
+    margin-bottom: 1rem;
+    line-height: 1.6;
+}
+.config-instructions strong {
+    color: var(--text-primary);
+}
+.config-instructions code {
+    background-color: var(--background-primary);
+    padding: 0.2em 0.4em;
+    border-radius: 4px;
+    font-size: 0.9em;
+}
+.code-block {
+    background-color: var(--background-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 1rem;
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
+    font-size: 0.85em;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    margin-top: 0.5rem;
+    margin-bottom: 1.5rem;
+    line-height: 1.6;
+}
+.code-block code {
+    padding: 0;
+    background: none;
+}
 
 /* --- Dashboard --- */
 .dashboard-controls {
