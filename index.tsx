@@ -1,21 +1,32 @@
 
 
-import React from "react";
-import ReactDOM from "react-dom/client";
-import App from "./App";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import ReactDOM from 'react-dom/client';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
+import { createClient } from '@supabase/supabase-js';
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);
-
+import './index.css';
 
 
 // --- Supabase logic moved from supabase.ts to fix browser loading issues ---
 // In a Vite build, `import.meta.env` will be populated. In other environments, it may be undefined.
-const SUPABASE_URL = (import.meta.env && import.meta.env.VITE_SUPABASE_URL) || '';
-const SUPABASE_ANON_KEY = (import.meta.env && import.meta.env.VITE_SUPABASE_ANON_KEY) || '';
+// This helper safely checks for Vite, then Node.js-style environment variables.
+const getSupabaseEnv = (key: string): string | undefined => {
+    const viteKey = `VITE_${key}`;
+    // 1. Check for Vite's `import.meta.env`
+    if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env[viteKey]) {
+        return import.meta.env[viteKey];
+    }
+    // 2. Check for Node.js-style `process.env`
+    if (typeof process !== 'undefined' && process.env) {
+        return process.env[viteKey] || process.env[key];
+    }
+    return undefined;
+};
+
+const SUPABASE_URL = getSupabaseEnv('SUPABASE_URL') || '';
+const SUPABASE_ANON_KEY = getSupabaseEnv('SUPABASE_ANON_KEY') || '';
 
 const isSupabaseConfigured = !!(SUPABASE_URL && SUPABASE_ANON_KEY);
 const supabase = isSupabaseConfigured ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : {} as any;
@@ -1957,7 +1968,7 @@ const App = () => {
                 <div className="auth-box">
                     <h2 style={{textAlign: 'center', marginBottom: '1rem'}}>Application Not Configured</h2>
                     <p className="auth-error" style={{ marginBottom: 0, textAlign: 'center' }}>
-                        The VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are not set. Please follow the deployment instructions in the README.md file.
+                        The required `SUPABASE_URL` and `SUPABASE_ANON_KEY` environment variables are not set. Please check your deployment configuration.
                     </p>
                 </div>
             </div>
