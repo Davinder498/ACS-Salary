@@ -9,7 +9,12 @@ import { createClient } from '@supabase/supabase-js';
 import './index.css';
 
 
-// --- Supabase logic moved from supabase.ts to fix browser loading issues ---
+// --- Supabase Configuration ---
+// IMPORTANT: For local development in AI Studio, replace these placeholders.
+// You can get these from your Supabase project's "Project Settings" > "API".
+const SUPABASE_URL_PLACEHOLDER = "https://ksubndttngntzmkafmdq.supabase.co";
+const SUPABASE_ANON_KEY_PLACEHOLDER = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtzdWJuZHR0bmdudHpta2FmbWRxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTIzMjU3MjYsImV4cCI6MjA2NzkwMTcyNn0.O11tjXXVwPXePrqEDH4E6es-_Eu-1k8dxd_7cuf3d3o";
+
 // In a Vite build, `import.meta.env` will be populated. In other environments, it may be undefined.
 // This helper safely checks for Vite, then Node.js-style environment variables.
 const getSupabaseEnv = (key: string): string | undefined => {
@@ -25,10 +30,17 @@ const getSupabaseEnv = (key: string): string | undefined => {
     return undefined;
 };
 
-const SUPABASE_URL = getSupabaseEnv('SUPABASE_URL') || '';
-const SUPABASE_ANON_KEY = getSupabaseEnv('SUPABASE_ANON_KEY') || '';
+// The app will try to use environment variables first, then fall back to the placeholders.
+const SUPABASE_URL = getSupabaseEnv('SUPABASE_URL') || SUPABASE_URL_PLACEHOLDER;
+const SUPABASE_ANON_KEY = getSupabaseEnv('SUPABASE_ANON_KEY') || SUPABASE_ANON_KEY_PLACEHOLDER;
 
-const isSupabaseConfigured = !!(SUPABASE_URL && SUPABASE_ANON_KEY);
+// Check if the keys are still the default placeholders.
+const isSupabaseConfigured =
+    SUPABASE_URL &&
+    SUPABASE_ANON_KEY &&
+    SUPABASE_URL !== "https://your-project-id.supabase.co" &&
+    SUPABASE_ANON_KEY !== "your-anon-public-key-here";
+
 const supabase = isSupabaseConfigured ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : {} as any;
 
 // --- DATA INTERFACES ---
@@ -673,6 +685,44 @@ COMMENT ON COLUMN public.profiles.id IS 'Links to the authenticated user in auth
 };
 
 // --- APP COMPONENTS ---
+
+const ConfigurationScreen = () => {
+    return (
+        <div className="auth-container">
+            <div className="auth-box" style={{ maxWidth: '600px', textAlign: 'left' }}>
+                <h1 style={{ textAlign: 'center' }}>Connect to Supabase</h1>
+                <p style={{ textAlign: 'center' }}>
+                    To get started, add your Supabase credentials to the application code.
+                </p>
+
+                <div className="config-instructions">
+                    <p><strong>Step 1: Locate your Keys</strong></p>
+                    <p style={{paddingBottom: '1rem'}}>
+                        In your Supabase project dashboard, go to <strong>Project Settings</strong> (the gear icon) &rarr; <strong>API</strong>. You will find your Project URL and anon public key there.
+                    </p>
+
+                    <p><strong>Step 2: Update the Code</strong></p>
+                    <p>
+                        Open the <code>index.tsx</code> file and find the section labeled <code>--- Supabase Configuration ---</code> at the top.
+                        Replace the placeholder values with your actual keys from Supabase:
+                    </p>
+                    <pre className="code-block">
+                        <code>
+                            {`// Replace these values with your actual Supabase credentials\nconst SUPABASE_URL_PLACEHOLDER = "https://your-project-id.supabase.co";\nconst SUPABASE_ANON_KEY_PLACEHOLDER = "your-anon-public-key-here";`}
+                        </code>
+                    </pre>
+
+                    <p style={{marginTop: '1.5rem'}}><strong>Step 3: Run the App</strong></p>
+                    <p>
+                        Once you've replaced the placeholders with your real keys, run the application again.
+                    </p>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+
 interface ModalProps {
     children: React.ReactNode;
     isOpen: boolean;
@@ -1963,16 +2013,7 @@ const App = () => {
     }, [theme]);
 
     if (!isSupabaseConfigured) {
-        return (
-            <div className="auth-container">
-                <div className="auth-box">
-                    <h2 style={{textAlign: 'center', marginBottom: '1rem'}}>Application Not Configured</h2>
-                    <p className="auth-error" style={{ marginBottom: 0, textAlign: 'center' }}>
-                        The required `SUPABASE_URL` and `SUPABASE_ANON_KEY` environment variables are not set. Please check your deployment configuration.
-                    </p>
-                </div>
-            </div>
-        );
+        return <ConfigurationScreen />;
     }
 
     useEffect(() => {
