@@ -1275,74 +1275,73 @@ input:checked + .slider:before {
         display: none;
     }
     .ledger-row {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 0.75rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0 1rem;
         padding: 1rem;
         border-bottom: 1px solid var(--border-color);
         border-radius: 0;
-        margin-bottom: 0.5rem;
+        margin-bottom: 0;
     }
     .ledger-row:last-child {
         border-bottom: none;
     }
     .ledger-row span {
+        padding: 0.5rem 0;
         text-align: left !important;
-        display: block;
     }
     .ledger-row span[data-label="Pay Period"] {
-        grid-column: 1 / -1;
+        width: 100%;
+        order: 1;
         font-weight: bold;
         font-size: 1rem;
-        margin-bottom: 0.5rem;
-        padding-bottom: 0.5rem;
+        padding-bottom: 0.75rem;
+        margin-bottom: 0.75rem;
         border-bottom: 1px dashed var(--border-color);
     }
-    .ledger-row span::before {
+    .ledger-row span[data-label="Start Balance"] {
+        width: 100%;
+        order: 2;
+        display: flex;
+        justify-content: space-between;
+    }
+    .ledger-row span[data-label="Banked"],
+    .ledger-row span[data-label="Cashed Out"] {
+        flex-basis: 0;
+        flex-grow: 1;
+        order: 3;
+    }
+    .ledger-row span[data-label="Cashed Out"] {
+        text-align: right !important;
+    }
+    .ledger-row span[data-label="End Balance"] {
+        width: 100%;
+        order: 4;
+        display: flex;
+        justify-content: space-between;
+        font-weight: 500;
+        padding-top: 0.75rem;
+        margin-top: 0.75rem;
+        border-top: 1px solid var(--border-color);
+    }
+    .ledger-row span[data-label]::before {
         content: attr(data-label);
-        font-size: 0.75rem;
         color: var(--text-secondary);
+    }
+    .ledger-row span[data-label="Start Balance"]::before,
+    .ledger-row span[data-label="End Balance"]::before {
+        margin-right: 1rem;
+    }
+    .ledger-row span[data-label="Banked"]::before,
+    .ledger-row span[data-label="Cashed Out"]::before {
         display: block;
+        font-size: 0.75rem;
         margin-bottom: 0.25rem;
         font-weight: 500;
     }
-    .ledger-row span[data-label="Pay Period"]::before,
-    .ledger-row span[data-label="Start Balance"]::before,
-    .ledger-row span[data-label="End Balance"]::before {
-        content: "";
-        margin: 0;
-        padding: 0;
-        display: inline;
+    .ledger-row span[data-label="Pay Period"]::before {
+        display: none;
     }
-
-    .ledger-row span[data-label="Pay Period"],
-    .ledger-row span[data-label="Start Balance"],
-    .ledger-row span[data-label="End Balance"] {
-        grid-column: 1 / -1;
-        display: flex;
-        justify-content: space-between;
-        width: 100%;
-    }
-    
-    .ledger-row span[data-label="Pay Period"] {
-       border-bottom: 1px dashed var(--border-color);
-       padding-bottom: 0.5rem;
-       margin-bottom: 0.5rem;
-       font-weight: bold;
-    }
-
-    .ledger-row span[data-label="Banked"],
-    .ledger-row span[data-label="Cashed Out"] {
-      text-align: right !important;
-    }
-
-    .ledger-row span[data-label="Start Balance"]::before,
-    .ledger-row span[data-label="End Balance"]::before {
-        content: attr(data-label);
-        font-weight: normal;
-        color: var(--text-secondary);
-    }
-
     .ledger-body.full-page {
         max-height: none;
         overflow-y: visible;
