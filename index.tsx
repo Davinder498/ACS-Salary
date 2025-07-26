@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import ReactDOM from 'react-dom/client';
 import jsPDF from 'jspdf';
@@ -1883,6 +1884,25 @@ const App = () => {
     
         return () => {
             subscription?.unsubscribe();
+        };
+    }, []);
+
+    // FIX: Proactively refresh session on mobile when app is brought to foreground
+    useEffect(() => {
+        const handleVisibilityChange = async () => {
+            if (document.visibilityState === 'visible' && isSupabaseConfigured) {
+                // This call refreshes the session from localStorage and ensures the
+                // auth token is up-to-date, which is crucial for mobile devices
+                // returning from the background.
+                await supabase.auth.getSession();
+            }
+        };
+    
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+        // Clean up the event listener when the component unmounts
+        return () => {
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
         };
     }, []);
 
