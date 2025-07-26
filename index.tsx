@@ -1994,21 +1994,20 @@ const App = () => {
     const handleSaveProfile = async (newProfile: ProfileData) => {
         if (!user || savingMessage) return;
 
-        const oldProfile = user.profile;
-        setUser(prev => prev ? ({ ...prev, profile: newProfile }) : null); // Optimistic update
         setSavingMessage("Saving profile...");
 
         try {
             await api.saveUserData(user.uid, { profile: newProfile });
-            alert('Profile saved successfully!');
+            // The heavy calculation happens here, while the spinner is visible.
+            setUser(prev => prev ? ({ ...prev, profile: newProfile }) : null);
         } catch (error: any) {
             console.error("Failed to save profile:", error);
             if (isAuthError(error)) {
                 alert("Your session has expired. Please log in again.");
                 handleLogout();
             } else {
-                alert("Error: Could not save your profile. Your changes have been reverted. Please check your connection and try again.");
-                setUser(prev => prev ? ({ ...prev, profile: oldProfile }) : null); // Rollback
+                alert("Error: Could not save your profile. Please check your connection and try again.");
+                // No rollback needed as state was not updated optimistically.
             }
         } finally {
             setSavingMessage(null);
@@ -2019,7 +2018,6 @@ const App = () => {
         if (!user || !user.profile || savingMessage) return;
     
         const isoSelected = toISODateString(selectedDate);
-        const oldShifts = JSON.parse(JSON.stringify(user.shifts || {}));
         const updatedShifts = JSON.parse(JSON.stringify(user.shifts || {}));
     
         // Normalize the editor output for comparison. A single 'O' shift means "no working shifts".
@@ -2040,19 +2038,20 @@ const App = () => {
             updatedShifts[isoSelected] = newShiftsFromEditor;
         }
         
-        setUser(prev => (prev ? { ...prev, shifts: updatedShifts } : null)); // Optimistic update
         setSavingMessage("Saving schedule...");
 
         try {
             await api.saveUserData(user.uid, { shifts: updatedShifts });
+            // The heavy calculation happens here, while the spinner is visible.
+            setUser(prev => (prev ? { ...prev, shifts: updatedShifts } : null));
         } catch (error: any) {
             console.error("Failed to save shifts:", error);
              if (isAuthError(error)) {
                 alert("Your session has expired. Please log in again.");
                 handleLogout();
             } else {
-                alert("Error: Could not save your schedule changes. The changes have been reverted. Please check your connection and try again.");
-                setUser(prev => (prev ? { ...prev, shifts: oldShifts } : null)); // Rollback
+                alert("Error: Could not save your schedule changes. Please check your connection and try again.");
+                // No rollback needed as state was not updated optimistically.
             }
         } finally {
             setSavingMessage(null);
