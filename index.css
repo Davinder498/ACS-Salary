@@ -60,6 +60,11 @@ body {
   transition: background-color 0.2s linear, color 0.2s linear;
 }
 
+/* Fix for background scrolling when modal is open */
+body.modal-open {
+    overflow: hidden;
+}
+
 #root {
   display: flex;
   flex-direction: column;
@@ -1022,9 +1027,10 @@ input:checked + .slider:before {
     background: rgba(0,0,0,0.7);
     z-index: 2000;
     display: flex;
-    align-items: center;
+    align-items: flex-start; /* Aligns content to top for scrolling */
     justify-content: center;
     padding: 1rem;
+    overflow-y: auto; /* Makes the backdrop scrollable */
 }
 .modal-content {
     background: var(--background-secondary);
@@ -1034,6 +1040,7 @@ input:checked + .slider:before {
     width: 100%;
     max-width: 500px;
     box-shadow: var(--shadow-md);
+    margin: 5vh auto; /* Adds top/bottom margin */
 }
 .modal-header {
     display: flex;
@@ -1232,6 +1239,9 @@ input:checked + .slider:before {
 
 /* --- Mobile Responsive Styles --- */
 @media screen and (max-width: 768px) {
+    body.modal-open .content {
+        overflow: hidden;
+    }
     .sidebar {
         position: fixed;
         left: 0;
