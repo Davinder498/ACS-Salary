@@ -613,6 +613,19 @@ interface ModalProps {
 }
 
 const Modal = ({ children, isOpen, onClose, title }: ModalProps) => {
+    useEffect(() => {
+        if (isOpen) {
+            document.body.classList.add('modal-open');
+        } else {
+            document.body.classList.remove('modal-open');
+        }
+
+        // Cleanup function to ensure the class is removed when the component unmounts
+        return () => {
+            document.body.classList.remove('modal-open');
+        };
+    }, [isOpen]);
+
     if (!isOpen) return null;
 
     return (
