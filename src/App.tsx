@@ -1,12 +1,12 @@
-import React from 'react'
+import React from 'react';
 
-function App() {
+const App: React.FC = () => {
   return (
-    <div style={{ textAlign: 'center', padding: '50px' }}>
+    <div>
       <h1>ACS Salary Calculator</h1>
       <p>The app is working!</p>
     </div>
-  )
-}
+  );
+};
 
-export default App
+export default App;
