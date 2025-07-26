@@ -284,7 +284,9 @@ input:focus, select:focus {
   margin-bottom: 0.5rem;
   color: var(--text-secondary);
 }
-
+.form-group:last-child {
+    margin-bottom: 0;
+}
 /* --- Auth & Configuration Screens --- */
 .auth-container {
   display: flex;
@@ -804,6 +806,11 @@ input:checked + .slider:before {
     gap: 1rem;
     align-items: flex-end;
 }
+.work-cycle-pattern-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem 1.5rem;
+}
 .deductions-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -1059,7 +1066,7 @@ input:checked + .slider:before {
 .loading-spinner-overlay {
     position: fixed;
     top: 0; left: 0; right: 0; bottom: 0;
-    background-color: var(--background-primary);
+    background-color: rgba(0,0,0,0.5);
     display: flex;
     justify-content: center;
     align-items: center;
@@ -1077,6 +1084,22 @@ input:checked + .slider:before {
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
 }
+
+.saving-indicator {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+    background-color: var(--background-secondary);
+    padding: 2rem 3rem;
+    border-radius: 12px;
+    box-shadow: var(--shadow-md);
+}
+.saving-indicator p {
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
 
 /* --- Database Setup Screen --- */
 .sql-script-container {
@@ -1304,6 +1327,9 @@ input:checked + .slider:before {
     }
     .work-cycle-inputs span {
         display: none;
+    }
+    .work-cycle-pattern-grid {
+        grid-template-columns: repeat(2, 1fr);
     }
     .deductions-grid {
         grid-template-columns: 1fr;
