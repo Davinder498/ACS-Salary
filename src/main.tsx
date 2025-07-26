@@ -14,8 +14,6 @@ import './index.css';
 // You can get these from your Supabase project's "Project Settings" > "API".
 const SUPABASE_URL_PLACEHOLDER = "https://ksubndttngntzmkafmdq.supabase.co";
 const SUPABASE_ANON_KEY_PLACEHOLDER = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtzdWJuZHR0bmdudHpta2FmbWRxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTIzMjU3MjYsImV4cCI6MjA2NzkwMTcyNn0.O11tjXXVwPXePrqEDH4E6es-_Eu-1k8dxd_7cuf3d3o";
-console.log("SUPABASE_URL:", SUPABASE_URL);
-console.log("SUPABASE_ANON_KEY exists?:", !!SUPABASE_ANON_KEY);
 
 // In a Vite build, `import.meta.env` will be populated. In other environments, it may be undefined.
 // This helper safely checks for Vite, then Node.js-style environment variables.
@@ -34,7 +32,9 @@ const getSupabaseEnv = (key: string): string | undefined => {
 
 // The app will try to use environment variables first, then fall back to the placeholders.
 const SUPABASE_URL = getSupabaseEnv('SUPABASE_URL') || SUPABASE_URL_PLACEHOLDER;
+console.log('SUPABASE_URL:', SUPABASE_URL);
 const SUPABASE_ANON_KEY = getSupabaseEnv('SUPABASE_ANON_KEY') || SUPABASE_ANON_KEY_PLACEHOLDER;
+console.log('SUPABASE_ANON_KEY exists?:', !!SUPABASE_ANON_KEY);
 
 // Check if the keys are still the default placeholders.
 const isSupabaseConfigured =
@@ -2120,6 +2120,7 @@ const App = () => {
     };
 
     if (loading) {
+    console.log('App is still loading...');
         return <LoadingSpinner />;
     }
 
