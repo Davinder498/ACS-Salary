@@ -1,5 +1,4 @@
 
-
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import ReactDOM from 'react-dom/client';
 import jsPDF from 'jspdf';
@@ -20,8 +19,8 @@ const SUPABASE_ANON_KEY_PLACEHOLDER = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJp
 const getSupabaseEnv = (key: string): string | undefined => {
     const viteKey = `VITE_${key}`;
     // 1. Check for Vite's `import.meta.env`
-    if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env[viteKey]) {
-        return import.meta.env[viteKey];
+    if (typeof import.meta !== 'undefined' && (import.meta as any).env && (import.meta as any).env[viteKey]) {
+        return (import.meta as any).env[viteKey];
     }
     // 2. Check for Node.js-style `process.env`
     if (typeof process !== 'undefined' && process.env) {
@@ -47,20 +46,11 @@ const supabase = isSupabaseConfigured ? createClient(SUPABASE_URL, SUPABASE_ANON
 interface WorkCycleReference {
   date: string;
   day: number;
-}
-interface DeductionSettings {
-  federalTd1: number;
-  provincialTd1: number;
-  pensionEnabled: boolean;
-  pensionRate: number; // percentage
-  unionDuesEnabled: boolean;
-  unionDuesAmount: number; // per pay period
-  additionalTax: number; // per pay period
+  pattern: Array<'D' | 'A' | 'N' | 'O'>;
 }
 interface ProfileData {
   baseRate: number;
   workCycleReference: WorkCycleReference | null;
-  deductions: DeductionSettings;
 }
 interface Shift {
     type: 'D' | 'A' | 'N' | 'O';
@@ -104,15 +94,6 @@ interface SalaryCalculationResult {
     equivalentBankedOtHours: number;
 }
 
-interface PayPeriodDeductions {
-    federalTax: number;
-    provincialTax: number;
-    cpp: number;
-    ei: number;
-    pension: number;
-    unionDues: number;
-    additionalTax: number;
-}
 interface LedgerEntry {
     ppNumber: number;
     year: number;
@@ -122,8 +103,6 @@ interface LedgerEntry {
     startBalance: number;
     endBalance: number;
     grossPay: number;
-    netPay: number;
-    deductions: PayPeriodDeductions;
     deferredPayFromPrevious: number;
     ytdGross: number;
 }
@@ -184,26 +163,17 @@ const api = {
             throw error;
         }
 
-        const defaultDeductions: DeductionSettings = {
-            federalTd1: 15705,
-            provincialTd1: 21885,
-            pensionEnabled: false,
-            pensionRate: 0,
-            unionDuesEnabled: false,
-            unionDuesAmount: 0,
-            additionalTax: 0,
-        };
-
         if (data) {
-             // Ensure existing users have a profile object and a deductions object within it.
+             // Ensure existing users have a profile object.
             if (!data.profile) {
                 data.profile = {
                     baseRate: 0,
                     workCycleReference: null,
-                    deductions: defaultDeductions,
                 };
-            } else if (!data.profile.deductions) {
-                data.profile.deductions = defaultDeductions;
+            }
+             // Backwards compatibility: Add default pattern if missing for existing users
+            if (data.profile.workCycleReference && !data.profile.workCycleReference.pattern) {
+                data.profile.workCycleReference.pattern = ['A', 'A', 'A', 'D', 'D', 'D', 'O', 'O', 'O'];
             }
             return data as UserData;
         }
@@ -224,8 +194,11 @@ const api = {
             email: authData.user.email || null,
             profile: { 
                 baseRate: 0, 
-                workCycleReference: null,
-                deductions: defaultDeductions,
+                workCycleReference: {
+                    date: toISODateString(new Date()),
+                    day: 1,
+                    pattern: ['A', 'A', 'A', 'D', 'D', 'D', 'O', 'O', 'O'],
+                }
             },
             shifts: {},
             cashedOutHours: {}
@@ -280,43 +253,6 @@ const toISODateString = (date: Date): string => {
     const d = new Date(date);
     d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
     return d.toISOString().slice(0, 10);
-};
-
-// --- DEDUCTION & TAX CONSTANTS (2024 - Alberta) ---
-const DEDUCTION_CONSTANTS_2024 = {
-    PAY_PERIODS_PER_YEAR: 26,
-    CPP: {
-        RATE: 0.0595,
-        BASIC_EXEMPTION: 3500,
-        MAX_PENSIONABLE_EARNINGS: 68500,
-        MAX_CONTRIBUTION: 3867.50,
-    },
-    EI: {
-        RATE: 0.0166,
-        MAX_INSURABLE_EARNINGS: 63200,
-        MAX_PREMIUM: 1049.12,
-    },
-    FEDERAL_TAX: {
-        BRACKETS: [
-            { limit: 55867, rate: 0.15 },
-            { limit: 111733, rate: 0.205 },
-            { limit: 173205, rate: 0.26 },
-            { limit: 246752, rate: 0.29 },
-            { limit: Infinity, rate: 0.33 },
-        ],
-        BASIC_PERSONAL_AMOUNT: 15705,
-        BPA_INCOME_THRESHOLD: 173205,
-    },
-    ALBERTA_TAX: {
-        BRACKETS: [
-            { limit: 148269, rate: 0.10 },
-            { limit: 185336, rate: 0.12 },
-            { limit: 240937, rate: 0.13 },
-            { limit: 315071, rate: 0.14 },
-            { limit: Infinity, rate: 0.15 },
-        ],
-        BASIC_PERSONAL_AMOUNT: 21885,
-    }
 };
 
 // --- STAT HOLIDAY CALCULATION ---
@@ -401,35 +337,32 @@ const getWorkCycleDayForDate = (date: Date, profile: ProfileData): number | null
     return ((profile.workCycleReference.day - 1 + diffDays) % WORK_CYCLE_LENGTH_DAYS + WORK_CYCLE_LENGTH_DAYS) % WORK_CYCLE_LENGTH_DAYS + 1;
 };
 
+// This function is the new single source of truth for what shifts are on a given day.
+// It checks for manual overrides first, then falls back to the work cycle pattern.
 const getEffectiveShiftsForDate = (date: Date, allShifts: ShiftsData, profile: ProfileData): Shift[] => {
     const isoDate = toISODateString(date);
-    const prevDate = addDays(date, -1);
-    const isoPrevDate = toISODateString(prevDate);
 
-    const shiftsForDate = allShifts?.[isoDate] || [];
-    const shiftsForPrevDate = allShifts?.[isoPrevDate] || [];
-
-    // If an explicit 'Off' shift is stored for this date, it overrides any defaults.
-    if (shiftsForDate.some(s => s.type === 'O')) {
-        return [];
+    // 1. Check for manual overrides for this date.
+    const manualShifts = allShifts?.[isoDate];
+    if (manualShifts && manualShifts.length > 0) {
+        // An explicit 'O' (Off) takes precedence and is stored as such.
+        const offShift = manualShifts.find(s => s.type === 'O');
+        if (offShift) return [offShift];
+        return manualShifts;
     }
 
-    const effectiveShifts = [
-        ...shiftsForDate.filter(s => s.type === 'D' || s.type === 'A'),
-        ...shiftsForPrevDate.filter(s => s.type === 'N')
-    ];
-
-    if (effectiveShifts.length > 0) {
-        return effectiveShifts;
-    }
-    
+    // 2. No override, so use the work cycle pattern.
     const dayInCycle = getWorkCycleDayForDate(date, profile);
-    let defaultShiftType: Shift['type'] = 'O';
-    if (dayInCycle >= 1 && dayInCycle <= 3) defaultShiftType = 'A';
-    if (dayInCycle >= 4 && dayInCycle <= 6) defaultShiftType = 'D';
-    if (defaultShiftType === 'O') return [];
-    
-    return [{ type: defaultShiftType, category: 'Regular', hasEscort: false, isBanked: false, isBookedOff: false }];
+    const pattern = profile?.workCycleReference?.pattern;
+    if (dayInCycle && pattern && pattern.length === WORK_CYCLE_LENGTH_DAYS) {
+        const shiftType = pattern[dayInCycle - 1];
+        if (shiftType !== 'O') {
+            return [{ type: shiftType, category: 'Regular', hasEscort: false, isBanked: false, isBookedOff: false }];
+        }
+    }
+
+    // 3. Default to empty (off).
+    return [];
 };
 
 const getCurrentPayPeriodIndex = (payPeriods: PayPeriod[]): number => {
@@ -448,83 +381,111 @@ const getCurrentPayPeriodIndex = (payPeriods: PayPeriod[]): number => {
 // --- CORE CALCULATION LOGIC ---
 const calculateSalaryForPayPeriod = (payPeriod: PayPeriod, allShifts: ShiftsData, profile: ProfileData, allStatHolidays: Record<string, string>): SalaryCalculationResult => {
     const baseRate = profile?.baseRate;
-    const initialDeferred: DeferredPay = { 
-        ot1_5x: { hours: 0, pay: 0 },
-        ot2x: { hours: 0, pay: 0 },
-        afternoon: { hours: 0, pay: 0 }, 
-        night: { hours: 0, pay: 0 }, 
-        weekend: { hours: 0, pay: 0 }, 
-        stm: { hours: 0, pay: 0 }, 
-        statHolidayBonus: { hours: 0, pay: 0 } 
+    const initialResult: SalaryCalculationResult = {
+        regularPay: { hours: 77.5, pay: 0 }, // Base hours are fixed for a pay period
+        deferred: {
+            ot1_5x: { hours: 0, pay: 0 },
+            ot2x: { hours: 0, pay: 0 },
+            afternoon: { hours: 0, pay: 0 },
+            night: { hours: 0, pay: 0 },
+            weekend: { hours: 0, pay: 0 },
+            stm: { hours: 0, pay: 0 },
+            statHolidayBonus: { hours: 0, pay: 0 }
+        },
+        equivalentBankedOtHours: 0
     };
 
-    if (!payPeriod || !baseRate || baseRate <= 0) {
-        return { 
-            regularPay: { hours: 0, pay: 0 },
-            deferred: initialDeferred, 
-            equivalentBankedOtHours: 0 
-        };
+    if (!payPeriod || !baseRate || baseRate <= 0 || !profile.workCycleReference) {
+        if (baseRate && baseRate > 0) {
+            initialResult.regularPay.pay = 77.5 * baseRate;
+        }
+        return initialResult;
     }
+    
+    initialResult.regularPay.pay = 77.5 * baseRate;
 
-    const deferred = JSON.parse(JSON.stringify(initialDeferred));
+    const deferred = JSON.parse(JSON.stringify(initialResult.deferred));
     let equivalentBankedOtHours = 0;
 
     for (let i = 0; i < PAY_PERIOD_LENGTH_DAYS; i++) {
         const date = addDays(payPeriod.start, i);
         const isoDate = toISODateString(date);
-        const workCycleDay = getWorkCycleDayForDate(date, profile);
-        const effectiveShifts = getEffectiveShiftsForDate(date, allShifts, profile);
-        const isStatHoliday = !!allStatHolidays[isoDate];
         
-        effectiveShifts.forEach(shift => {
-            if (shift.category !== 'Regular') { 
-                const isWorkDay = workCycleDay !== null && workCycleDay >= 1 && workCycleDay <= 6;
-                const isDay1Off = workCycleDay === 7;
-                const isDay2Or3Off = workCycleDay === 8 || workCycleDay === 9;
-                
+        // Get shifts for the day. With the new logic, effective/displayed shifts are the same as starting/calculated shifts.
+        const shiftsToProcess = getEffectiveShiftsForDate(date, allShifts, profile);
+        
+        const workCycleDay = getWorkCycleDayForDate(date, profile);
+        const isStatHoliday = !!allStatHolidays[isoDate];
+
+        shiftsToProcess.forEach(shift => {
+            if (shift.type === 'O') return; // Skip 'Off' shifts completely
+
+            // --- Overtime Calculation ---
+            if (shift.category !== 'Regular') {
                 let otPay1_5x = 0, otHours1_5x = 0;
                 let otPay2x = 0, otHours2x = 0;
-
+                
+                const isWorkDay = workCycleDay !== null && workCycleDay >= 1 && workCycleDay <= 6;
+                
                 if (isWorkDay && !isStatHoliday) {
-                    otHours1_5x = 2;
-                    otPay1_5x = 2 * 1.5 * baseRate;
-                    otHours2x = 5.5;
-                    otPay2x = 5.5 * 2 * baseRate;
-                } else { 
+                    if (shift.category === 'First Overtime') {
+                        // Rule: OT on a regular work day is 7.5h total, split into 2h@1.5x and 5.5h@2x
+                        otHours1_5x = 2;
+                        otPay1_5x = 2 * 1.5 * baseRate;
+                        otHours2x = 5.5;
+                        otPay2x = 5.5 * 2 * baseRate;
+                    } else { // 'Second Overtime' on a regular work day
+                        // Assumption: Second OT on a workday is a full 7.75h shift at 2.0x
+                        const otHours = 7.75;
+                        otHours2x = otHours;
+                        otPay2x = otHours * 2.0 * baseRate;
+                    }
+                } 
+                // Rule: OT on a day off or stat is 7.75h total
+                else {
                     const otHours = 7.75;
                     let rateMultiplier = 0;
+                    const isDay1Off = workCycleDay === 7;
 
-                    if (isDay2Or3Off) {
-                        rateMultiplier = 2;
-                    } else if (isDay1Off || isStatHoliday) {
-                        rateMultiplier = shift.category === 'First Overtime' ? 1.5 : 2;
+                    // On Day 1 Off or a Stat Holiday, the rate depends on the OT type
+                    if (isDay1Off || isStatHoliday) {
+                         rateMultiplier = shift.category === 'First Overtime' ? 1.5 : 2.0;
+                    } 
+                    // On Day 2/3 Off, any OT is 2.0x
+                    else { 
+                         rateMultiplier = 2.0;
                     }
                     
                     if (rateMultiplier === 1.5) {
                         otHours1_5x = otHours;
                         otPay1_5x = otHours * 1.5 * baseRate;
-                    } else if (rateMultiplier === 2) {
+                    } else if (rateMultiplier === 2.0) {
                         otHours2x = otHours;
-                        otPay2x = otHours * 2 * baseRate;
+                        otPay2x = otHours * 2.0 * baseRate;
                     }
                 }
                 
                 const totalOtPay = otPay1_5x + otPay2x;
 
                 if (shift.isBanked) {
-                    equivalentBankedOtHours += (totalOtPay / baseRate);
+                    equivalentBankedOtHours += totalOtPay / baseRate;
                 } else {
                     deferred.ot1_5x.hours += otHours1_5x;
                     deferred.ot1_5x.pay += otPay1_5x;
                     deferred.ot2x.hours += otHours2x;
                     deferred.ot2x.pay += otPay2x;
                 }
-
-            } else { 
+            } 
+            // --- Regular Shift Calculation ---
+            else {
+                // Rule: Working a regular shift on a stat holiday provides a 0.5x bonus (total value is 1.5x)
                 if (isStatHoliday) {
                     deferred.statHolidayBonus.hours += 7.75;
                     deferred.statHolidayBonus.pay += 7.75 * 0.5 * baseRate;
-                } else if (!shift.isBookedOff) { 
+                }
+
+                if (!shift.isBookedOff) {
+                    // Rule: Shift differentials
                     if (shift.type === 'A') {
                         deferred.afternoon.hours += 7.75;
                         deferred.afternoon.pay += 7.75 * 2.75;
@@ -534,105 +495,25 @@ const calculateSalaryForPayPeriod = (payPeriod: PayPeriod, allShifts: ShiftsData
                         deferred.night.pay += 7.75 * 5.00;
                     }
                     
-                    const dayOfWeek = date.getDay(); 
-                    const isWeekend = (dayOfWeek === 6 || dayOfWeek === 0) || (dayOfWeek === 5 && shift.type === 'A') || (dayOfWeek === 1 && effectiveShifts.some(s => s.type === 'N'));
-                     if (isWeekend) {
-                        deferred.weekend.hours += 7.75;
-                        deferred.weekend.pay += 7.75 * 3.25;
-                     }
+                    // Rule: Weekend Premium
+                    const dayOfWeek = date.getDay(); // 0=Sun, 1=Mon... 6=Sat
+                    const isWeekendShift = (dayOfWeek === 6) || (dayOfWeek === 0) || (dayOfWeek === 5 && shift.type === 'A');
+                    if (isWeekendShift) {
+                       deferred.weekend.hours += 7.75;
+                       deferred.weekend.pay += 7.75 * 3.25;
+                    }
                 }
             }
             
+            // Rule: Straight Time Meal for External Escorts
             if (shift.hasEscort) {
                 deferred.stm.hours += 1;
                 deferred.stm.pay += 1 * baseRate;
             }
         });
     }
-    return { regularPay: { hours: 77.5, pay: 77.5 * baseRate }, deferred, equivalentBankedOtHours };
-};
-
-const calculateDeductions = (
-    grossPayForPeriod: number,
-    settings: DeductionSettings,
-    ytd: { gross: number; cpp: number; ei: number },
-    year: number
-): PayPeriodDeductions => {
-    // For now, we only have 2024 constants. In a real app, this would be dynamic by year.
-    const consts = DEDUCTION_CONSTANTS_2024;
-    const { PAY_PERIODS_PER_YEAR, CPP, EI, FEDERAL_TAX, ALBERTA_TAX } = consts;
-
-    // 1. CPP Calculation
-    const cppExemptionPerPeriod = CPP.BASIC_EXEMPTION / PAY_PERIODS_PER_YEAR;
-    let cppContribution = 0;
-    if (ytd.cpp < CPP.MAX_CONTRIBUTION) {
-        const cppEarnings = Math.max(0, grossPayForPeriod - cppExemptionPerPeriod);
-        if (cppEarnings > 0) {
-            const potentialCpp = cppEarnings * CPP.RATE;
-            const remainingCpp = CPP.MAX_CONTRIBUTION - ytd.cpp;
-            cppContribution = Math.max(0, Math.min(potentialCpp, remainingCpp));
-        }
-    }
-
-    // 2. EI Calculation
-    let eiPremium = 0;
-    if (ytd.ei < EI.MAX_PREMIUM) {
-        const potentialEi = grossPayForPeriod * EI.RATE;
-        const remainingEi = EI.MAX_PREMIUM - ytd.ei;
-        eiPremium = Math.max(0, Math.min(potentialEi, remainingEi));
-    }
     
-    // 3. Other Deductions
-    const pensionContribution = settings.pensionEnabled ? grossPayForPeriod * (settings.pensionRate / 100) : 0;
-    const unionDues = settings.unionDuesEnabled ? settings.unionDuesAmount : 0;
-
-    // 4. Taxable Income Calculation
-    const annualGross = grossPayForPeriod * PAY_PERIODS_PER_YEAR;
-    const annualPension = pensionContribution * PAY_PERIODS_PER_YEAR;
-    const annualUnionDues = unionDues * PAY_PERIODS_PER_YEAR;
-
-    const annualCpp = cppContribution * PAY_PERIODS_PER_YEAR;
-    const annualEi = eiPremium * PAY_PERIODS_PER_YEAR;
-
-    // Federal Taxable Income
-    const fedNonRefundableCredits = Math.max(0, settings.federalTd1) + annualCpp + annualEi;
-    const fedTaxableIncome = Math.max(0, annualGross - annualPension - annualUnionDues - fedNonRefundableCredits);
-
-    // Provincial Taxable Income
-    const provNonRefundableCredits = Math.max(0, settings.provincialTd1) + annualCpp + annualEi;
-    const provTaxableIncome = Math.max(0, annualGross - annualPension - annualUnionDues - provNonRefundableCredits);
-
-    // 5. Calculate Taxes
-    const calculateTax = (taxableIncome: number, brackets: {limit: number, rate: number}[]) => {
-        let tax = 0;
-        let remainingIncome = taxableIncome;
-        let lastLimit = 0;
-
-        for (const bracket of brackets) {
-            if (remainingIncome <= 0) break;
-            const taxableInBracket = Math.min(remainingIncome, bracket.limit - lastLimit);
-            tax += taxableInBracket * bracket.rate;
-            remainingIncome -= taxableInBracket;
-            lastLimit = bracket.limit;
-        }
-        return tax;
-    };
-    
-    const annualFederalTax = calculateTax(fedTaxableIncome, FEDERAL_TAX.BRACKETS);
-    const annualProvincialTax = calculateTax(provTaxableIncome, ALBERTA_TAX.BRACKETS);
-    
-    const federalTax = annualFederalTax / PAY_PERIODS_PER_YEAR;
-    const provincialTax = annualProvincialTax / PAY_PERIODS_PER_YEAR;
-
-    return {
-        federalTax: federalTax,
-        provincialTax: provincialTax,
-        cpp: cppContribution,
-        ei: eiPremium,
-        pension: pensionContribution,
-        unionDues: unionDues,
-        additionalTax: settings.additionalTax,
-    };
+    return { regularPay: initialResult.regularPay, deferred, equivalentBankedOtHours };
 };
 
 
@@ -795,6 +676,15 @@ const DatabaseSetupScreen = ({ sqlScript }: { sqlScript: string }) => {
 const LoadingSpinner = () => (
     <div className="loading-spinner-overlay">
         <div className="loading-spinner"></div>
+    </div>
+);
+
+const SavingSpinner = ({ message }: { message: string }) => (
+    <div className="loading-spinner-overlay">
+        <div className="saving-indicator">
+            <div className="loading-spinner"></div>
+            <p>{message}</p>
+        </div>
     </div>
 );
 
@@ -971,39 +861,44 @@ const Sidebar = ({ currentPage, setPage, onLogout, isOpen, onClose, theme, toggl
     </aside>
 );
 
-interface ProfileProps { profile: ProfileData; onSave: (profile: ProfileData) => void; }
-const Profile = React.memo(({ profile, onSave }: ProfileProps) => {
+interface ProfileProps {
+    profile: ProfileData;
+    onSave: (profile: ProfileData) => void;
+    isSaving: boolean;
+}
+const Profile = React.memo(({ profile, onSave, isSaving }: ProfileProps) => {
+    const defaultPattern: Array<'D' | 'A' | 'N' | 'O'> = ['A', 'A', 'A', 'D', 'D', 'D', 'O', 'O', 'O'];
     const [baseRate, setBaseRate] = useState(profile.baseRate);
     const [refDate, setRefDate] = useState(profile.workCycleReference?.date || toISODateString(new Date()));
     const [refDay, setRefDay] = useState(profile.workCycleReference?.day || 1);
-    const [deductions, setDeductions] = useState<DeductionSettings>(profile.deductions);
+    const [pattern, setPattern] = useState<Array<'D' | 'A' | 'N' | 'O'>>(profile.workCycleReference?.pattern || defaultPattern);
+
 
     useEffect(() => {
         setBaseRate(profile.baseRate);
-        setRefDate(profile.workCycleReference?.date || toISODateString(new Date()));
-        setRefDay(profile.workCycleReference?.day || 1);
-        setDeductions(profile.deductions);
+        if (profile.workCycleReference) {
+            setRefDate(profile.workCycleReference.date);
+            setRefDay(profile.workCycleReference.day);
+            setPattern(profile.workCycleReference.pattern || defaultPattern);
+        }
     }, [profile]);
 
-    const handleDeductionChange = (field: keyof DeductionSettings, value: any) => {
-        setDeductions(prev => ({ ...prev, [field]: value }));
+    const handlePatternChange = (index: number, value: 'D' | 'A' | 'N' | 'O') => {
+        const newPattern = [...pattern];
+        newPattern[index] = value;
+        setPattern(newPattern);
     };
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         onSave({ 
             baseRate: parseFloat(String(baseRate)) || 0,
-            workCycleReference: { date: refDate, day: parseInt(String(refDay), 10) },
-            deductions: {
-                ...deductions,
-                federalTd1: Number(deductions.federalTd1),
-                provincialTd1: Number(deductions.provincialTd1),
-                pensionRate: Number(deductions.pensionRate),
-                unionDuesAmount: Number(deductions.unionDuesAmount),
-                additionalTax: Number(deductions.additionalTax)
-            }
+            workCycleReference: { 
+                date: refDate, 
+                day: parseInt(String(refDay), 10),
+                pattern: pattern 
+            },
         });
-        alert('Profile saved!');
     };
 
     return (
@@ -1016,9 +911,10 @@ const Profile = React.memo(({ profile, onSave }: ProfileProps) => {
                     <input type="number" id="baseRate" value={baseRate} onChange={(e) => setBaseRate(Number(e.target.value))} step="0.01" required />
                 </div>
               </div>
+
               <div className="card">
-                <h3 className="card-header-title">Work Cycle Setup</h3>
-                <p className="card-description">Set a reference point for your 9-day work cycle.</p>
+                <h3 className="card-header-title">Work Cycle Reference</h3>
+                <p className="card-description">Set a single date that you know the cycle day for. This acts as an anchor for the schedule.</p>
                 <div className="work-cycle-inputs">
                     <div className="form-group" style={{flex: 2}}>
                         <label htmlFor="refDate">Reference Date</label>
@@ -1030,58 +926,39 @@ const Profile = React.memo(({ profile, onSave }: ProfileProps) => {
                         <select id="refDay" value={refDay} onChange={e => setRefDay(parseInt(e.target.value, 10))} required>
                             {Array.from({ length: 9 }, (_, i) => i + 1).map(day => (
                                 <option key={day} value={day}>
-                                    {getWorkCycleDayName(day)}
+                                    Day {day}
                                 </option>
                             ))}
                         </select>
                     </div>
                 </div>
               </div>
-              
-              <div className="card">
-                <h3 className="card-header-title">Deductions & Taxes</h3>
-                <p className="card-description">Configure your payroll deductions for a more accurate net pay projection. Default values are for 2024.</p>
-                
-                <div className="deductions-grid">
-                    <div className="form-group">
-                        <label htmlFor="federalTd1">Federal Basic Personal Amount (TD1)</label>
-                        <input type="number" id="federalTd1" value={deductions.federalTd1} onChange={(e) => handleDeductionChange('federalTd1', e.target.value)} step="1" />
-                    </div>
-                    <div className="form-group">
-                        <label htmlFor="provincialTd1">Alberta Basic Personal Amount (TD1AB)</label>
-                        <input type="number" id="provincialTd1" value={deductions.provincialTd1} onChange={(e) => handleDeductionChange('provincialTd1', e.target.value)} step="1" />
-                    </div>
-                </div>
 
-                <div className="deductions-grid">
-                    <div className="form-group">
-                        <div className="toggle-form-group">
-                            <label htmlFor="pensionEnabled" className="toggle-label">PSPP Contribution</label>
-                            <label className="switch-container">
-                                <input type="checkbox" id="pensionEnabled" checked={deductions.pensionEnabled} onChange={e => handleDeductionChange('pensionEnabled', e.target.checked)} />
-                                <span className="slider round"></span>
-                            </label>
+              <div className="card">
+                <h3 className="card-header-title">Work Cycle Pattern</h3>
+                <p className="card-description">Define your personal 9-day work rotation pattern. This will be used as the default schedule.</p>
+                <div className="work-cycle-pattern-grid">
+                    {pattern.map((shiftType, index) => (
+                        <div key={index} className="form-group">
+                            <label htmlFor={`cycle-day-${index + 1}`}>Day {index + 1}</label>
+                            <select 
+                                id={`cycle-day-${index + 1}`} 
+                                value={shiftType} 
+                                onChange={e => handlePatternChange(index, e.target.value as 'D' | 'A' | 'N' | 'O')}
+                            >
+                                <option value="D">Day Shift</option>
+                                <option value="A">Afternoon Shift</option>
+                                <option value="N">Night Shift</option>
+                                <option value="O">Off Day</option>
+                            </select>
                         </div>
-                         {deductions.pensionEnabled && <input type="number" value={deductions.pensionRate} onChange={e => handleDeductionChange('pensionRate', e.target.value)} placeholder="Rate (% of Gross)" step="0.01" />}
-                    </div>
-                    <div className="form-group">
-                        <div className="toggle-form-group">
-                             <label htmlFor="unionDuesEnabled" className="toggle-label">Union Dues</label>
-                             <label className="switch-container">
-                                 <input type="checkbox" id="unionDuesEnabled" checked={deductions.unionDuesEnabled} onChange={e => handleDeductionChange('unionDuesEnabled', e.target.checked)} />
-                                 <span className="slider round"></span>
-                             </label>
-                        </div>
-                         {deductions.unionDuesEnabled && <input type="number" value={deductions.unionDuesAmount} onChange={e => handleDeductionChange('unionDuesAmount', e.target.value)} placeholder="Amount ($) per PP" step="0.01" />}
-                    </div>
-                </div>
-                <div className="form-group">
-                    <label htmlFor="additionalTax">Additional Deduction Per Pay Period ($)</label>
-                    <input type="number" id="additionalTax" value={deductions.additionalTax} onChange={(e) => handleDeductionChange('additionalTax', e.target.value)} step="1" placeholder="0" />
+                    ))}
                 </div>
               </div>
 
-              <button type="submit" style={{marginTop: '1rem'}}>Save Profile Changes</button>
+              <button type="submit" style={{marginTop: '1rem'}} disabled={isSaving}>
+                {isSaving ? 'Saving...' : 'Save Profile Changes'}
+              </button>
             </form>
         </div>
     );
@@ -1093,8 +970,9 @@ interface WorkScheduleProps {
     onSaveShifts: (date: Date, newShifts: Shift[]) => void;
     payPeriods: PayPeriod[];
     allStatHolidays: Record<string, string>;
+    isSaving: boolean;
 }
-const WorkSchedule = React.memo(({ profile, shifts, onSaveShifts, payPeriods, allStatHolidays }: WorkScheduleProps) => {
+const WorkSchedule = React.memo(({ profile, shifts, onSaveShifts, payPeriods, allStatHolidays, isSaving }: WorkScheduleProps) => {
     const [isEditorOpen, setIsEditorOpen] = useState(false);
     const [selectedDate, setSelectedDate] = useState<Date | null>(null);
 
@@ -1113,27 +991,6 @@ const WorkSchedule = React.memo(({ profile, shifts, onSaveShifts, payPeriods, al
             setTimeout(() => element.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
         }
     }, [initialPayPeriodIndex, payPeriods]);
-
-    const getInitialShiftsForDate = useCallback((date: Date): Shift[] => {
-        const isoDate = toISODateString(date);
-        const prevDate = addDays(date, -1);
-        const isoPrevDate = toISODateString(prevDate);
-    
-        const shiftsForToday = (shifts?.[isoDate] || []).filter(s => s.type === 'D' || s.type === 'A' || s.type === 'O');
-        const nightShiftsFromPrevDay = (shifts?.[isoPrevDate] || []).filter(s => s.type === 'N');
-        const effectiveSavedShifts = [...shiftsForToday, ...nightShiftsFromPrevDay];
-        
-        if (effectiveSavedShifts.length > 0) {
-            return effectiveSavedShifts.map(s => ({ ...s, isBookedOff: !!s.isBookedOff }));
-        }
-    
-        const dayInCycle = getWorkCycleDayForDate(date, profile);
-        let defaultShiftType: Shift['type'] = 'O';
-        if (dayInCycle >= 1 && dayInCycle <= 3) defaultShiftType = 'A';
-        if (dayInCycle >= 4 && dayInCycle <= 6) defaultShiftType = 'D';
-    
-        return [{ type: defaultShiftType, category: 'Regular', hasEscort: false, isBanked: false, isBookedOff: false }];
-    }, [shifts, profile]);
 
     const handleDayClick = (date: Date) => {
         setSelectedDate(date);
@@ -1206,13 +1063,12 @@ const WorkSchedule = React.memo(({ profile, shifts, onSaveShifts, payPeriods, al
                     <div className="calendar-grid">
                         {Array.from({ length: PAY_PERIOD_LENGTH_DAYS }).map((_, i) => {
                             const date = addDays(pp.start, i);
-                            const isoDate = toISODateString(date);
                             const effectiveShifts = getEffectiveShiftsForDate(date, shifts, profile);
                             const workCycleDay = getWorkCycleDayForDate(date, profile);
                             
                             const dayOfWeek = date.getDay();
                             const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-                            const isStatHoliday = !!allStatHolidays[isoDate];
+                            const isStatHoliday = !!allStatHolidays[toISODateString(date)];
                             
                             const dayClasses = ['calendar-day'];
                             if (isStatHoliday) dayClasses.push('is-stat-holiday');
@@ -1222,7 +1078,7 @@ const WorkSchedule = React.memo(({ profile, shifts, onSaveShifts, payPeriods, al
                                 <div key={i} className={dayClasses.join(' ')} onClick={() => handleDayClick(date)}>
                                     <div className="day-header">
                                         <span className="day-number">{date.getDate()}</span>
-                                        {isStatHoliday && <span className="stat-holiday-marker" title={allStatHolidays[isoDate]}>★</span>}
+                                        {isStatHoliday && <span className="stat-holiday-marker" title={allStatHolidays[toISODateString(date)]}>★</span>}
                                     </div>
                                     <div className="day-info">
                                         {effectiveShifts.map((shift, idx) => (
@@ -1240,9 +1096,10 @@ const WorkSchedule = React.memo(({ profile, shifts, onSaveShifts, payPeriods, al
             ))}
             <Modal isOpen={isEditorOpen} onClose={handleEditorClose} title={`Edit Shifts for ${selectedDate?.toLocaleDateString()}`}>
                 <ShiftEditor 
-                    shiftsForDate={selectedDate ? getInitialShiftsForDate(selectedDate) : []}
+                    shiftsForDate={selectedDate ? getEffectiveShiftsForDate(selectedDate, shifts, profile) : []}
                     onClose={handleEditorClose}
                     onSave={handleEditorSave}
+                    isSaving={isSaving}
                 />
             </Modal>
         </div>
@@ -1253,8 +1110,9 @@ interface ShiftEditorProps {
     shiftsForDate: Shift[];
     onClose: () => void;
     onSave: (shifts: Shift[]) => void;
+    isSaving: boolean;
 }
-const ShiftEditor = ({ shiftsForDate, onClose, onSave }: ShiftEditorProps) => {
+const ShiftEditor = ({ shiftsForDate, onClose, onSave, isSaving }: ShiftEditorProps) => {
     const [currentShifts, setCurrentShifts] = useState<Shift[]>([]);
 
     useEffect(() => {
@@ -1353,8 +1211,10 @@ const ShiftEditor = ({ shiftsForDate, onClose, onSave }: ShiftEditorProps) => {
                     {currentShifts.filter(s => s.type !== 'O').length < 2 && <button onClick={addShift} className="secondary-btn">Add Shift</button>}
                 </div>
                 <div>
-                    <button onClick={onClose} className="cancel-btn">Cancel</button>
-                    <button onClick={() => onSave(currentShifts)} className="save-btn">Save</button>
+                    <button onClick={onClose} className="cancel-btn" disabled={isSaving}>Cancel</button>
+                    <button onClick={() => onSave(currentShifts)} className="save-btn" disabled={isSaving}>
+                        {isSaving ? 'Saving...' : 'Save'}
+                    </button>
                 </div>
             </div>
         </div>
@@ -1370,14 +1230,12 @@ interface PrintablePaystubProps {
 }
 const PrintablePaystub = ({ profile, ledgerEntry, currentPayPeriod, previousPayPeriod, username }: PrintablePaystubProps) => {
     const formatCurrency = (val: number) => (val || 0).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' });
-    const formatNegativeCurrency = (val: number) => `-${formatCurrency(Math.abs(val))}`;
-
+    
     if (!ledgerEntry) return null;
 
-    const { data: currentPeriod, deductions, grossPay, netPay } = ledgerEntry;
+    const { data: currentPeriod, grossPay } = ledgerEntry;
     const prevDeferred = previousPayPeriod ? ledgerEntry.deferredPayFromPrevious : 0;
     const cashedOutPay = ledgerEntry.cashedOut * profile.baseRate;
-    const totalDeductions = Object.values(deductions).reduce((sum, val) => sum + val, 0);
 
     interface PaylineProps { label: string; hours?: number; pay: number; rate: number | string; }
     const Payline = ({ label, hours, pay, rate }: PaylineProps) => (
@@ -1418,30 +1276,8 @@ const PrintablePaystub = ({ profile, ledgerEntry, currentPayPeriod, previousPayP
                         </tbody>
                     </table>
                 </div>
-                <div className="stub-column">
-                    <div className="stub-section-title">Deductions</div>
-                    <table className="stub-table">
-                        <tbody>
-                            {deductions.federalTax > 0 && <tr><td>Federal Income Tax</td><td>{formatNegativeCurrency(deductions.federalTax)}</td></tr>}
-                            {deductions.provincialTax > 0 && <tr><td>Alberta Income Tax</td><td>{formatNegativeCurrency(deductions.provincialTax)}</td></tr>}
-                            {deductions.cpp > 0 && <tr><td>CPP Contribution</td><td>{formatNegativeCurrency(deductions.cpp)}</td></tr>}
-                            {deductions.ei > 0 && <tr><td>EI Premium</td><td>{formatNegativeCurrency(deductions.ei)}</td></tr>}
-                            {deductions.pension > 0 && <tr><td>PSPP Contribution</td><td>{formatNegativeCurrency(deductions.pension)}</td></tr>}
-                            {deductions.unionDues > 0 && <tr><td>Union Dues</td><td>{formatNegativeCurrency(deductions.unionDues)}</td></tr>}
-                            {deductions.additionalTax > 0 && <tr><td>Additional Deduction</td><td>{formatNegativeCurrency(deductions.additionalTax)}</td></tr>}
-                            <tr className="total-row"><td>Total Deductions</td><td>{formatNegativeCurrency(totalDeductions)}</td></tr>
-                        </tbody>
-                    </table>
-                </div>
             </div>
             
-            <div className="stub-net-pay-section">
-                <div className="stub-net-pay">
-                    <span>Net Pay</span>
-                    <span>{formatCurrency(netPay)}</span>
-                </div>
-            </div>
-
             <div className="stub-section-title">Banked Overtime Summary</div>
              <table className="stub-table">
                 <thead><tr><th>Description</th><th>Hours</th></tr></thead>
@@ -1624,7 +1460,6 @@ const Dashboard = React.memo(({ username, profile, cashedOutHours, onCashedOutHo
     const [activeTab, setActiveTab] = useState('summary');
     const [annualViewMode, setAnnualViewMode] = useState('text');
     const [localCashedOutValue, setLocalCashedOutValue] = useState<string>('');
-    const [showNetPay, setShowNetPay] = useState(false);
 
     const deferredPayMeta = useMemo(() => ({
         ot1_5x: { label: 'Overtime (1.5x)', rate: profile.baseRate * 1.5 },
@@ -1794,13 +1629,13 @@ const Dashboard = React.memo(({ username, profile, cashedOutHours, onCashedOutHo
         }, 100); 
     };
     
-    const PayDetailLine = ({ label, hours, rate, pay, isDeduction }: { label: string; hours?: number; rate?: number | string; pay: number; isDeduction?: boolean; }) => (
+    const PayDetailLine = ({ label, hours, rate, pay }: { label: string; hours?: number; rate?: number | string; pay: number; }) => (
         <div className="card-item">
             <span>
                 {label}
                 {hours > 0 && typeof rate !== 'undefined' && <span className="item-details">{hours.toFixed(2)} hrs @ {typeof rate === 'string' ? rate : formatCurrency(rate)}/hr</span>}
             </span>
-            <span className={isDeduction ? 'removed' : ''}>{isDeduction ? `-${formatCurrency(pay)}` : formatCurrency(pay)}</span>
+            <span>{formatCurrency(pay)}</span>
         </div>
     );
     
@@ -1850,21 +1685,14 @@ const Dashboard = React.memo(({ username, profile, cashedOutHours, onCashedOutHo
                         <div className="card card-full-width">
                             <div className="dashboard-card-header">
                                 <h3>Projected Paycheck for PP {currentPayPeriod.payPeriodOfYear} ({currentPayPeriod.year})</h3>
-                                <div className="net-pay-toggle">
-                                    <span>Show Net Pay</span>
-                                    <label className="switch-container">
-                                        <input type="checkbox" checked={showNetPay} onChange={e => setShowNetPay(e.target.checked)} />
-                                        <span className="slider round"></span>
-                                    </label>
-                                </div>
                                 <button onClick={handleDownloadPdf} disabled={isGeneratingPdf || !!salaryData.error} className="pdf-download-btn">
                                 <DownloadIcon /> {isGeneratingPdf ? 'Generating...' : 'Download PDF'}
                                 </button>
                             </div>
                             
                             <div className="paycheck-hero">
-                                <span className="paycheck-hero-label">{showNetPay ? 'Projected Net Pay' : 'Projected Gross Pay'}</span>
-                                <span className="paycheck-hero-amount">{formatCurrency(showNetPay ? ledgerEntry.netPay : ledgerEntry.grossPay)}</span>
+                                <span className="paycheck-hero-label">Projected Gross Pay</span>
+                                <span className="paycheck-hero-amount">{formatCurrency(ledgerEntry.grossPay)}</span>
                             </div>
                             
                             <div className="paycheck-details">
@@ -1893,20 +1721,8 @@ const Dashboard = React.memo(({ username, profile, cashedOutHours, onCashedOutHo
                                 <p className="card-input-note">Cashed out at 1x base rate</p>
                                 {ledgerEntry.cashedOut > 0 && <PayDetailLine label="Cashed Out OT Pay" hours={ledgerEntry.cashedOut} rate={profile.baseRate} pay={ledgerEntry.cashedOut * profile.baseRate} />}
                                 
-                                {showNetPay && 
-                                    <>
-                                        <div className="card-item total-line"><span>Gross Pay</span><span>{formatCurrency(ledgerEntry.grossPay)}</span></div>
-                                        <p className="card-subtitle">Deductions</p>
-                                        <PayDetailLine label="Federal Tax" pay={ledgerEntry.deductions.federalTax} isDeduction />
-                                        <PayDetailLine label="Provincial Tax" pay={ledgerEntry.deductions.provincialTax} isDeduction />
-                                        <PayDetailLine label="CPP Contribution" pay={ledgerEntry.deductions.cpp} isDeduction />
-                                        <PayDetailLine label="EI Premium" pay={ledgerEntry.deductions.ei} isDeduction />
-                                        {ledgerEntry.deductions.pension > 0 && <PayDetailLine label="PSPP Contribution" pay={ledgerEntry.deductions.pension} isDeduction />}
-                                        {ledgerEntry.deductions.unionDues > 0 && <PayDetailLine label="Union Dues" pay={ledgerEntry.deductions.unionDues} isDeduction />}
-                                        {ledgerEntry.deductions.additionalTax > 0 && <PayDetailLine label="Additional Deduction" pay={ledgerEntry.deductions.additionalTax} isDeduction />}
-                                        <div className="card-item total-line"><span>Total Deductions</span><span className="removed">-{formatCurrency(Object.values(ledgerEntry.deductions).reduce((s, v) => s + v, 0))}</span></div>
-                                    </>
-                                }
+                                <div className="card-item total-line"><span>Gross Pay</span><span>{formatCurrency(ledgerEntry.grossPay)}</span></div>
+
                             </div>
                         </div>
 
@@ -1995,6 +1811,13 @@ const Dashboard = React.memo(({ username, profile, cashedOutHours, onCashedOutHo
     );
 });
 
+// --- Helper to detect auth errors ---
+const isAuthError = (error: any): boolean => {
+    // Supabase throws errors with specific structures. A 401 status is a clear sign.
+    // Also checking for messages is a good fallback for JWT-related issues.
+    return error && (error.status === 401 || /jwt/i.test(error.message));
+};
+
 const App = () => {
     const [user, setUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
@@ -2002,6 +1825,7 @@ const App = () => {
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [theme, setTheme] = useState(() => localStorage.getItem('acs-salary-theme') || 'dark');
     const [databaseSetupError, setDatabaseSetupError] = useState<string | null>(null);
+    const [savingMessage, setSavingMessage] = useState<string | null>(null);
 
     const toggleTheme = useCallback(() => {
         setTheme(prevTheme => (prevTheme === 'dark' ? 'light' : 'dark'));
@@ -2016,6 +1840,12 @@ const App = () => {
         return <ConfigurationScreen />;
     }
 
+    const handleLogout = async () => {
+        setIsSidebarOpen(false); // Good UX for mobile
+        await api.logout();
+        setUser(null);
+    };
+    
     useEffect(() => {
         setDatabaseSetupError(null);
         const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
@@ -2033,7 +1863,11 @@ const App = () => {
                     if (error?.code === '42P01' || errorMessage.includes('relation "public.profiles" does not exist')) {
                         console.error("Database setup needed:", errorMessage);
                         setDatabaseSetupError(getDatabaseSetupSql());
-                    } else {
+                    } else if (isAuthError(error)) {
+                        console.error("Auth error during initial data fetch, logging out.", error);
+                        handleLogout();
+                    }
+                    else {
                         console.error("Logging out due to data fetch failure:", error);
                     }
                     setUser(null);
@@ -2079,30 +1913,52 @@ const App = () => {
         return periods;
     }, []);
     
-    const financialData = useMemo(() => {
-        if (!user || !user.profile.baseRate || user.profile.baseRate <= 0 || !user.profile.workCycleReference) {
-            return { ledger: [] as LedgerEntry[], calculationEndIndex: 0 };
-        }
+    // --- Performance Optimization: Split calculations into two stages ---
     
+    // Stage 1: Perform the heavy, base calculations for salary.
+    // This only re-runs when the user's profile or shifts change.
+    const baseCalculations = useMemo(() => {
+        if (!user || !user.profile.baseRate || user.profile.baseRate <= 0 || !user.profile.workCycleReference) {
+            return { calculationResults: [], calculationEndIndex: 0 };
+        }
+
         const today = new Date();
         const currentPPIndexForRange = payPeriods.findIndex(p => today >= p.start && today <= p.end);
         const effectiveCurrentPPIndex = currentPPIndexForRange > -1 ? currentPPIndexForRange : 0;
         const calculationEndIndex = Math.min(effectiveCurrentPPIndex + 52, payPeriods.length - 1);
-    
-        const ledger: LedgerEntry[] = [];
-        let runningBalance = 0;
-        let ytd = { gross: 0, cpp: 0, ei: 0 };
-        let lastYear = -1;
-    
+        
+        const calculationResults: { pp: PayPeriod, data: SalaryCalculationResult }[] = [];
         for (let i = 0; i <= calculationEndIndex; i++) {
             const pp = payPeriods[i];
-            
+            const ppData = calculateSalaryForPayPeriod(pp, user.shifts, user.profile, allStatHolidays);
+            calculationResults.push({ pp, data: ppData });
+        }
+
+        return { calculationResults, calculationEndIndex };
+    }, [user?.profile, user?.shifts, payPeriods, allStatHolidays]);
+
+    // Stage 2: Build the full ledger using the cached base calculations.
+    // This re-runs when the base calculations change OR when cashed out hours change.
+    // It's much faster because it doesn't have to recalculate the salary for every period.
+    const financialData = useMemo(() => {
+        const { calculationResults, calculationEndIndex } = baseCalculations;
+        if (!user || calculationResults.length === 0) {
+             return { ledger: [] as LedgerEntry[], calculationEndIndex };
+        }
+
+        const ledger: LedgerEntry[] = [];
+        let runningBalance = 0;
+        let ytd = { gross: 0 };
+        let lastYear = -1;
+
+        for (let i = 0; i < calculationResults.length; i++) {
+            const { pp, data: ppData } = calculationResults[i];
+
             if (pp.year !== lastYear) {
-                ytd = { gross: 0, cpp: 0, ei: 0 };
+                ytd = { gross: 0 };
                 lastYear = pp.year;
             }
 
-            const ppData = calculateSalaryForPayPeriod(pp, user.shifts, user.profile, allStatHolidays);
             const cashedOutHours = user.cashedOutHours?.[String(pp.number)] || 0;
             const cashedOutPay = cashedOutHours * user.profile.baseRate;
             
@@ -2110,14 +1966,8 @@ const App = () => {
             const deferredPayFromPrevious = prevDeferred ? Object.values(prevDeferred).reduce((sum, cat) => sum + cat.pay, 0) : 0;
             
             const grossPay = ppData.regularPay.pay + deferredPayFromPrevious + cashedOutPay;
-
-            const deductions = calculateDeductions(grossPay, user.profile.deductions, ytd, pp.year);
-            const totalDeductions = Object.values(deductions).reduce((sum, val) => sum + val, 0);
-            const netPay = grossPay - totalDeductions;
             
             ytd.gross += grossPay;
-            ytd.cpp += deductions.cpp;
-            ytd.ei += deductions.ei;
 
             const startBalance = runningBalance;
             const endBalance = startBalance + ppData.equivalentBankedOtHours - cashedOutHours;
@@ -2131,72 +1981,103 @@ const App = () => {
                 startBalance,
                 endBalance,
                 grossPay,
-                netPay,
-                deductions,
                 deferredPayFromPrevious,
                 ytdGross: ytd.gross
             });
             runningBalance = endBalance;
         }
-    
+        
         return { ledger, calculationEndIndex };
-    }, [user, payPeriods, allStatHolidays]);
+    }, [baseCalculations, user?.cashedOutHours, user?.profile?.baseRate]);
 
 
     const handleSaveProfile = async (newProfile: ProfileData) => {
-        if (!user) return;
-        await api.saveUserData(user.uid, { profile: newProfile });
-        setUser(prev => prev ? ({ ...prev, profile: newProfile }) : null);
+        if (!user || savingMessage) return;
+
+        const oldProfile = user.profile;
+        setUser(prev => prev ? ({ ...prev, profile: newProfile }) : null); // Optimistic update
+        setSavingMessage("Saving profile...");
+
+        try {
+            await api.saveUserData(user.uid, { profile: newProfile });
+            alert('Profile saved successfully!');
+        } catch (error: any) {
+            console.error("Failed to save profile:", error);
+            if (isAuthError(error)) {
+                alert("Your session has expired. Please log in again.");
+                handleLogout();
+            } else {
+                alert("Error: Could not save your profile. Your changes have been reverted. Please check your connection and try again.");
+                setUser(prev => prev ? ({ ...prev, profile: oldProfile }) : null); // Rollback
+            }
+        } finally {
+            setSavingMessage(null);
+        }
     };
 
-    const handleSaveShiftsForDate = async (date: Date, newShiftsForEditedDate: Shift[]) => {
-        if (!user) return;
+    const handleSaveShiftsForDate = async (selectedDate: Date, newShiftsFromEditor: Shift[]) => {
+        if (!user || !user.profile || savingMessage) return;
     
-        const isoDate = toISODateString(date);
-        const isoPrevDate = toISODateString(addDays(date, -1));
+        const isoSelected = toISODateString(selectedDate);
+        const oldShifts = JSON.parse(JSON.stringify(user.shifts || {}));
         const updatedShifts = JSON.parse(JSON.stringify(user.shifts || {}));
     
-        // 1. Separate the new shifts from the editor into Night shifts and others.
-        // Day, Afternoon, and Off shifts are stored on the date they occur.
-        const newDayShifts = newShiftsForEditedDate.filter(s => s.type !== 'N');
-        // Night shifts are stored on the date they *begin*, which is the day before they are displayed.
-        const newNightShifts = newShiftsForEditedDate.filter(s => s.type === 'N');
+        // Normalize the editor output for comparison. A single 'O' shift means "no working shifts".
+        const normalizedNewShifts = (newShiftsFromEditor.length === 1 && newShiftsFromEditor[0].type === 'O') 
+            ? [] 
+            : newShiftsFromEditor;
     
-        // 2. Update shifts for the date that was edited (isoDate).
-        // We need to keep any night shifts that were already saved on this date,
-        // because they belong to the *next* day's schedule.
-        // All other shifts (D, A, O) for this date are replaced by the new ones from the editor.
-        const preservedNightShiftsOnIsoDate = (updatedShifts[isoDate] || []).filter((s: Shift) => s.type === 'N');
-        updatedShifts[isoDate] = [...preservedNightShiftsOnIsoDate, ...newDayShifts];
+        // Get the default shifts from the pattern for comparison.
+        const defaultShiftsForSelectedDate = getEffectiveShiftsForDate(selectedDate, {}, user.profile);
     
-        // 3. Update shifts for the previous day (isoPrevDate).
-        // We need to keep any Day, Afternoon, or Off shifts that were already saved on the previous day.
-        // The Night shifts for the day we edited are stored here, so we replace any old ones.
-        const preservedDayShiftsOnIsoPrevDate = (updatedShifts[isoPrevDate] || []).filter((s: Shift) => s.type !== 'N');
-        updatedShifts[isoPrevDate] = [...preservedDayShiftsOnIsoPrevDate, ...newNightShifts];
+        const newConfigIsDefault =
+            JSON.stringify(normalizedNewShifts.sort((a, b) => a.type.localeCompare(b.type))) ===
+            JSON.stringify(defaultShiftsForSelectedDate.sort((a, b) => a.type.localeCompare(b.type)));
     
-        // 4. Clean up any date entries that no longer have shifts.
-        if (updatedShifts[isoDate]?.length === 0) {
-            delete updatedShifts[isoDate];
+        if (newConfigIsDefault) {
+            delete updatedShifts[isoSelected];
+        } else {
+            updatedShifts[isoSelected] = newShiftsFromEditor;
         }
-        if (updatedShifts[isoPrevDate]?.length === 0) {
-            delete updatedShifts[isoPrevDate];
+        
+        setUser(prev => (prev ? { ...prev, shifts: updatedShifts } : null)); // Optimistic update
+        setSavingMessage("Saving schedule...");
+
+        try {
+            await api.saveUserData(user.uid, { shifts: updatedShifts });
+        } catch (error: any) {
+            console.error("Failed to save shifts:", error);
+             if (isAuthError(error)) {
+                alert("Your session has expired. Please log in again.");
+                handleLogout();
+            } else {
+                alert("Error: Could not save your schedule changes. The changes have been reverted. Please check your connection and try again.");
+                setUser(prev => (prev ? { ...prev, shifts: oldShifts } : null)); // Rollback
+            }
+        } finally {
+            setSavingMessage(null);
         }
-    
-        await api.saveUserData(user.uid, { shifts: updatedShifts });
-        setUser(prev => prev ? ({ ...prev, shifts: updatedShifts }) : null);
     };
 
     const handleCashedOutHoursChange = async (newCashedOutHours: CashedOutHoursData) => {
-        if (!user) return;
-        await api.saveUserData(user.uid, { cashedOutHours: newCashedOutHours });
-        setUser(prev => prev ? ({ ...prev, cashedOutHours: newCashedOutHours }) : null);
-    };
+        if (!user || savingMessage) return;
 
-    const handleLogout = async () => {
-        setIsSidebarOpen(false); // Good UX for mobile
-        await api.logout();
-        setUser(null);
+        const oldCashedOutHours = user.cashedOutHours;
+        setUser(prev => prev ? ({ ...prev, cashedOutHours: newCashedOutHours }) : null); // Optimistic update
+
+        try {
+            await api.saveUserData(user.uid, { cashedOutHours: newCashedOutHours });
+            // No success alert for debounced auto-save to avoid being annoying.
+        } catch (error: any) {
+            console.error("Failed to auto-save cashed out hours:", error);
+            if (isAuthError(error)) {
+                alert("Your session has expired and auto-save failed. Please log in again.");
+                handleLogout();
+            } else {
+                alert("Auto-save for cashed out hours failed. Your change was not saved. Please check your connection and try again.");
+                setUser(prev => prev ? ({ ...prev, cashedOutHours: oldCashedOutHours }) : null); // Rollback
+            }
+        }
     };
 
     const handleSetPage = (newPage: string) => {
@@ -2220,6 +2101,7 @@ const App = () => {
 
     return (
         <div className="app-container">
+            {savingMessage && <SavingSpinner message={savingMessage} />}
             <Sidebar 
                 currentPage={page} 
                 setPage={handleSetPage} 
@@ -2247,8 +2129,13 @@ const App = () => {
                     onSaveShifts={handleSaveShiftsForDate}
                     payPeriods={payPeriods}
                     allStatHolidays={allStatHolidays}
+                    isSaving={!!savingMessage}
                 />}
-                {page === 'profile' && <Profile profile={user.profile} onSave={handleSaveProfile} />}
+                {page === 'profile' && <Profile 
+                    profile={user.profile} 
+                    onSave={handleSaveProfile}
+                    isSaving={!!savingMessage} 
+                />}
                 {page === 'ledger' && <LedgerPage 
                     ledger={financialData.ledger} 
                     currentGlobalPPNumber={payPeriods[currentPPIndex]?.number}
