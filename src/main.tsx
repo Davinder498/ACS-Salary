@@ -153,6 +153,7 @@ const api = {
         }
     },
     getUserData: async (uid: string): Promise<UserData> => {
+        console.log('Fetching user data for UID:', uid);
         if (!isSupabaseConfigured) throw new Error("Database not configured.");
         
         const { data, error } = await supabase
@@ -161,6 +162,7 @@ const api = {
             .eq('id', uid)
             .single();
 
+        console.error('Supabase getUserData result:', data, error);
         if (error && error.code !== 'PGRST116') { // PGRST116 means 0 rows found
             console.error("Error fetching profile:", error);
             throw error;
@@ -178,6 +180,7 @@ const api = {
             if (data.profile.workCycleReference && !data.profile.workCycleReference.pattern) {
                 data.profile.workCycleReference.pattern = ['A', 'A', 'A', 'D', 'D', 'D', 'O', 'O', 'O'];
             }
+            console.log('User data fetched successfully:', data);
             return data as UserData;
         }
 
@@ -1865,8 +1868,10 @@ const App = () => {
     useEffect(() => {
         setDatabaseSetupError(null);
         const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+            console.log('Auth state changed:', _event, session);
             const sessionUser = session?.user;
             if (sessionUser) {
+                console.log('Authenticated user found:', sessionUser);
                 try {
                     const userData = await api.getUserData(sessionUser.id);
                     setUser({
