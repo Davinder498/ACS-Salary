@@ -1119,7 +1119,7 @@ const WorkSchedule = React.memo(({ profile, shifts, onSaveShifts, payPeriods, al
                                     </div>
                                     <div className="day-info">
                                         {effectiveShifts.map((shift, idx) => (
-                                            <div key={idx} className={`shift-badge ${shift.type}`}>{shift.type}</div>
+                                            <div key={idx} className={`shift-badge ${shift.type} ${shift.category !== 'Regular' ? 'is-overtime' : ''}`}>{shift.type}</div>
                                         ))}
                                     </div>
                                     <div className="day-footer">
@@ -1884,44 +1884,56 @@ const App = () => {
     };
     
     useEffect(() => {
-        setDatabaseSetupError(null);
-        const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-            const sessionUser = session?.user;
-            if (sessionUser) {
+        const processSession = async (session: Session | null) => {
+            if (session) {
                 try {
-                    const userData = await api.getUserData(sessionUser.id);
+                    const userData = await api.getUserData(session.user.id);
                     setUser({
-                        uid: sessionUser.id,
+                        uid: session.user.id,
                         ...userData
                     });
-                    setDatabaseSetupError(null); // Clear error on success
+                    setDatabaseSetupError(null);
                 } catch (error: any) {
                     const errorMessage = typeof error?.message === 'string' ? error.message : '';
                     if (error?.code === '42P01' || errorMessage.includes('relation "public.profiles" does not exist')) {
                         console.error("Database setup needed:", errorMessage);
                         setDatabaseSetupError(getDatabaseSetupSql());
                     } else if (isAuthError(error)) {
-                        console.error("Auth error during initial data fetch, logging out.", error);
-                        handleLogout();
-                    }
-                    else {
+                        console.error("Auth error during data fetch, logging out.", error);
+                        handleLogout(); // fire-and-forget is ok
+                    } else {
                         console.error("Logging out due to data fetch failure:", error);
                     }
                     setUser(null);
-                } finally {
-                    setLoading(false);
                 }
             } else {
                 setUser(null);
-                setLoading(false);
                 setDatabaseSetupError(null);
             }
+             setLoading(false);
+        };
+
+        // Initial session check. This is more reliable than waiting for onAuthStateChange in some cases.
+        supabase.auth.getSession().then(({ data: { session } }) => {
+            processSession(session);
         });
+
+        // Then, subscribe to subsequent auth changes
+        const { data: { subscription } } = supabase.auth.onAuthStateChange(
+            (_event, session) => {
+                // To prevent a re-render flash on initial load, we check if user is already set.
+                // The getSession() call above will handle the initial state. This handles changes.
+                if (session?.user.id !== user?.uid || (!session && user)) {
+                    setLoading(true);
+                    processSession(session);
+                }
+            }
+        );
     
         return () => {
             subscription?.unsubscribe();
         };
-    }, []);
+    }, [user]); // Re-run if user object changes from null to session or vice-versa
 
     // FIX: Proactively refresh session on mobile when app is brought to foreground
     useEffect(() => {
