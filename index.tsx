@@ -1,4 +1,5 @@
-
+import { clearBrowserCache } from './cacheCleaner';
+clearBrowserCache(); // Clear old service workers and caches
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import ReactDOM from 'react-dom/client';
