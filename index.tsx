@@ -8,16 +8,21 @@ import { createClient } from '@supabase/supabase-js';
 import './index.css';
 
 fetch('/metadata.json')
-  .then(res => res.json())
-  .then(data => {
+  .then((res) => (res.ok ? res.json() : null))
+  .then((data) => {
+    if (!data) {
+      console.warn('metadata.json not found, skipping version check');
+      return;
+    }
     const currentVersion = localStorage.getItem('app_version');
     if (currentVersion && currentVersion !== data.build) {
       localStorage.setItem('app_version', data.build);
-      window.location.reload(); // force reload with new bundle
+      window.location.reload();
     } else if (!currentVersion) {
       localStorage.setItem('app_version', data.build);
     }
-  });
+  })
+  .catch(() => console.warn('Failed to fetch metadata.json'));
 
 // Clear old caches automatically on app load
 if ('caches' in window) {
