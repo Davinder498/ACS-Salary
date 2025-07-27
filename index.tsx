@@ -10,9 +10,19 @@ import ReactDOM from 'react-dom/client';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { createClient } from '@supabase/supabase-js';
-
 import './index.css';
 
+fetch('/metadata.json')
+  .then(res => res.json())
+  .then(data => {
+    const currentVersion = localStorage.getItem('app_version');
+    if (currentVersion && currentVersion !== data.build) {
+      localStorage.setItem('app_version', data.build);
+      window.location.reload(); // force reload with new bundle
+    } else if (!currentVersion) {
+      localStorage.setItem('app_version', data.build);
+    }
+  });
 
 // --- Supabase Configuration ---
 // IMPORTANT: For local development in AI Studio, replace these placeholders.
