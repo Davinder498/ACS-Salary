@@ -1,9 +1,4 @@
-// Clear old caches automatically on app load
-if ('caches' in window) {
-  caches.keys().then(keys => {
-    keys.forEach(key => caches.delete(key));
-  });
-}
+
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import ReactDOM from 'react-dom/client';
@@ -23,6 +18,13 @@ fetch('/metadata.json')
       localStorage.setItem('app_version', data.build);
     }
   });
+
+// Clear old caches automatically on app load
+if ('caches' in window) {
+  caches.keys().then(keys => {
+    keys.forEach(key => caches.delete(key));
+  });
+}
 
 // --- Supabase Configuration ---
 // IMPORTANT: For local development in AI Studio, replace these placeholders.
