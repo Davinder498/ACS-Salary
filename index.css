@@ -934,7 +934,12 @@ input:checked + .slider:before {
   color: white;
   font-weight: 500;
   font-size: 0.75rem;
+  border: 2px solid transparent;
 }
+.shift-badge.is-overtime {
+  border: 2px dashed rgba(255, 255, 255, 0.8);
+}
+
 .shift-badge.D { background-color: var(--day-shift-color); }
 .shift-badge.A { background-color: var(--afternoon-shift-color); }
 .shift-badge.N { background-color: var(--night-shift-color); }
