@@ -616,6 +616,23 @@ input:focus, select:focus {
   margin: -0.25rem 0 0.5rem;
   width: 100%;
 }
+.deferred-breakdown-list {
+  padding: 0.5rem 0 0.5rem 1.5rem;
+  margin: 0.5rem 0 0 1.5rem;
+  border-left: 2px solid var(--border-color);
+}
+.deferred-breakdown-list .card-item {
+  border-bottom: 1px dashed var(--border-color);
+  padding: 0.6rem 0;
+  font-size: 0.9em;
+}
+.deferred-breakdown-list .card-item:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+.deferred-breakdown-list .card-item span:first-child {
+  color: var(--text-secondary);
+}
 
 /* --- Net Pay Toggle --- */
 .net-pay-toggle {
@@ -935,9 +952,6 @@ input:checked + .slider:before {
   font-weight: 500;
   font-size: 0.75rem;
   border: 2px solid transparent;
-}
-.shift-badge.is-overtime {
-  border: 2px dashed rgba(255, 255, 255, 0.8);
 }
 
 .shift-badge.D { background-color: var(--day-shift-color); }
