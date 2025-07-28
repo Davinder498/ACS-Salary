@@ -1334,6 +1334,33 @@ const Dashboard = ({ profile, shifts, cashedOutHours, onSaveCashedOutHours, payP
         return calculateSalaryForPayPeriod(previousPayPeriod, shifts, profile, allStatHolidays);
     }, [previousPayPeriod, shifts, profile, allStatHolidays]);
 
+    const ledgerData = useMemo(() => {
+        if (!profile?.baseRate || profile.baseRate <= 0) return [];
+        
+        let bankBalance = 0;
+        
+        const sortedPayPeriods = [...payPeriods].sort((a, b) => a.number - b.number);
+        
+        return sortedPayPeriods.map(pp => {
+            const startBalance = bankBalance;
+            const cashedOut = cashedOutHours[pp.number] || 0;
+            const calculation = calculateSalaryForPayPeriod(pp, shifts, profile, allStatHolidays);
+            
+            if (!calculation) return null;
+
+            bankBalance += calculation.equivalentBankedOtHours;
+            bankBalance -= cashedOut;
+            
+            return {
+                globalPPNumber: pp.number,
+                startBalance: startBalance,
+                endBalance: bankBalance,
+            };
+        }).filter(Boolean) as { globalPPNumber: number; startBalance: number; endBalance: number; }[];
+    }, [profile, shifts, cashedOutHours, payPeriods, allStatHolidays]);
+
+    const selectedLedgerEntry = ledgerData.find(entry => entry.globalPPNumber === selectedPayPeriod.number);
+
     const handlePayPeriodChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
         setSelectedPayPeriodIndex(parseInt(e.target.value, 10));
     };
@@ -1400,6 +1427,7 @@ const Dashboard = ({ profile, shifts, cashedOutHours, onSaveCashedOutHours, payP
                         onSaveCashedOutHours={(hours) => onSaveCashedOutHours(selectedPayPeriod.year, selectedPayPeriod.payPeriodOfYear, hours)}
                         currentCalculation={currentCalculation}
                         previousCalculation={previousCalculation}
+                        bankSummary={selectedLedgerEntry ? { startBalance: selectedLedgerEntry.startBalance, endBalance: selectedLedgerEntry.endBalance } : null}
                     />
                 </>
             ) : (
@@ -1423,8 +1451,9 @@ interface PayPeriodDetailViewProps {
     onSaveCashedOutHours: (hours: number) => void;
     currentCalculation: SalaryCalculationResult | null;
     previousCalculation: SalaryCalculationResult | null;
+    bankSummary: { startBalance: number; endBalance: number; } | null;
 }
-const PayPeriodDetailView = ({ payPeriod, previousPayPeriod, profile, cashedOutHours, onSaveCashedOutHours, currentCalculation, previousCalculation }: PayPeriodDetailViewProps) => {
+const PayPeriodDetailView = ({ payPeriod, previousPayPeriod, profile, cashedOutHours, onSaveCashedOutHours, currentCalculation, previousCalculation, bankSummary }: PayPeriodDetailViewProps) => {
     const printableRef = useRef<HTMLDivElement>(null);
     const [isPrinting, setIsPrinting] = useState(false);
 
@@ -1535,8 +1564,10 @@ const PayPeriodDetailView = ({ payPeriod, previousPayPeriod, profile, cashedOutH
                     ref={printableRef} 
                     payPeriod={payPeriod} 
                     calculationResult={currentCalculation} 
+                    previousCalculationResult={previousCalculation}
                     profile={profile} 
                     cashedOutHours={cashedOutHours} 
+                    bankSummary={bankSummary}
                 />
             </div>
         </>
@@ -1830,16 +1861,25 @@ const Ledger = ({ profile, shifts, cashedOutHours, payPeriods, allStatHolidays }
 interface PrintablePaystubProps {
     payPeriod: PayPeriod;
     calculationResult: SalaryCalculationResult | null;
+    previousCalculationResult: SalaryCalculationResult | null;
     profile: ProfileData | null;
     cashedOutHours: number;
+    bankSummary: { startBalance: number; endBalance: number; } | null;
 }
-const PrintablePaystub = React.forwardRef<HTMLDivElement, PrintablePaystubProps>(({ payPeriod, calculationResult, profile, cashedOutHours }, ref) => {
+const PrintablePaystub = React.forwardRef<HTMLDivElement, PrintablePaystubProps>(({ payPeriod, calculationResult, previousCalculationResult, profile, cashedOutHours, bankSummary }, ref) => {
     if (!calculationResult || !profile) {
         return null;
     }
-    const { regularPay, deferred, equivalentBankedOtHours } = calculationResult;
-    const totalDeferredPay = Object.values(deferred).reduce((sum, item) => sum + item.pay, 0);
-    const totalGrossPay = regularPay.pay + totalDeferredPay;
+    // Destructure current period's calculation results
+    const { regularPay, deferred: deferredPayToNext, equivalentBankedOtHours } = calculationResult;
+
+    // Calculate earnings from previous period's deferred pay
+    const deferredPayFromPrevious = previousCalculationResult ? previousCalculationResult.deferred : null;
+    const totalDeferredFromPrevious = deferredPayFromPrevious ? Object.values(deferredPayFromPrevious).reduce((sum, item) => sum + item.pay, 0) : 0;
+    const totalGrossPay = regularPay.pay + totalDeferredFromPrevious;
+
+    // Calculate total deferred pay from the current period
+    const totalDeferredToNext = Object.values(deferredPayToNext).reduce((sum, item) => sum + item.pay, 0);
 
     return (
         <div ref={ref} className="printable-area">
@@ -1847,16 +1887,17 @@ const PrintablePaystub = React.forwardRef<HTMLDivElement, PrintablePaystubProps>
                 <h1>Pay Statement</h1>
                 <p>
                     <strong>Pay Period:</strong> {payPeriod.payPeriodOfYear} ({payPeriod.year})<br />
-                    <strong>Period Dates:</strong> {payPeriod.start.toLocaleDateString()} to {payPeriod.end.toLocaleDateString()}
+                    <strong>Period Dates:</strong> {payPeriod.start.toLocaleDateString()} to {payPeriod.end.toLocaleDateString()}<br />
+                    <strong>Pay Date:</strong> {payPeriod.end.toLocaleDateString()}
                 </p>
             </div>
             <div className="stub-main-content">
                 <div className="stub-column">
-                    <h3 className="stub-section-title">Earnings</h3>
+                    <h3 className="stub-section-title">Earnings (Paid this Period)</h3>
                     <table className="stub-table">
                         <tbody>
                             <tr><td>Base Salary</td><td>${regularPay.pay.toFixed(2)}</td></tr>
-                             {Object.entries(deferred).map(([key, value]) => value.pay > 0 && (
+                             {deferredPayFromPrevious && Object.entries(deferredPayFromPrevious).map(([key, value]) => value.pay > 0 && (
                                 <tr key={key}>
                                     <td>
                                         {key.replace(/_/g, ' ').replace('ot1 5x', 'OT 1.5x').replace('ot2x', 'OT 2.0x').replace(/\b\w/g, l => l.toUpperCase())}
@@ -1870,15 +1911,38 @@ const PrintablePaystub = React.forwardRef<HTMLDivElement, PrintablePaystubProps>
                     </table>
                 </div>
                 <div className="stub-column">
-                    <h3 className="stub-section-title">Banked Time Summary</h3>
+                    <h3 className="stub-section-title">Banked Overtime Summary</h3>
                      <table className="stub-table">
                         <tbody>
-                            <tr><td>Hours Banked</td><td>{equivalentBankedOtHours.toFixed(2)}</td></tr>
-                            <tr><td>Hours Cashed Out</td><td>({cashedOutHours.toFixed(2)})</td></tr>
+                            {bankSummary && <tr><td>Start Balance</td><td>{bankSummary.startBalance.toFixed(2)} hrs</td></tr>}
+                            <tr><td>Hours Banked</td><td>{equivalentBankedOtHours.toFixed(2)} hrs</td></tr>
+                            <tr><td>Hours Cashed Out</td><td>({cashedOutHours.toFixed(2)} hrs)</td></tr>
+                            {bankSummary && <tr className="total-row"><td>End Balance</td><td>{bankSummary.endBalance.toFixed(2)} hrs</td></tr>}
                         </tbody>
                     </table>
                 </div>
             </div>
+
+            {/* Section for Deferred Pay to Next Period */}
+            {totalDeferredToNext > 0 && (
+                 <div>
+                    <h3 className="stub-section-title">Deferred to Next Pay Period</h3>
+                    <table className="stub-table">
+                        <tbody>
+                            {Object.entries(deferredPayToNext).map(([key, value]) => value.pay > 0 && (
+                                <tr key={key}>
+                                    <td>
+                                        {key.replace(/_/g, ' ').replace('ot1 5x', 'OT 1.5x').replace('ot2x', 'OT 2.0x').replace(/\b\w/g, l => l.toUpperCase())}
+                                        <span className="detail-line">{value.hours.toFixed(2)} hrs</span>
+                                    </td>
+                                    <td>${value.pay.toFixed(2)}</td>
+                                </tr>
+                            ))}
+                            <tr className="total-row"><td>Total Deferred</td><td>${totalDeferredToNext.toFixed(2)}</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            )}
         </div>
     );
 });
