@@ -31,7 +31,6 @@ if ('caches' in window) {
     keys.forEach(key => caches.delete(key));
   });
 }
-
 // --- Supabase Configuration ---
 // IMPORTANT: For local development in AI Studio, replace these placeholders.
 // You can get these from your Supabase project's "Project Settings" > "API".
@@ -199,7 +198,12 @@ const api = {
             if (data.profile.workCycleReference && !data.profile.workCycleReference.pattern) {
                 data.profile.workCycleReference.pattern = ['A', 'A', 'A', 'D', 'D', 'D', 'O', 'O', 'O'];
             }
-            return data as UserData;
+            return {
+                email: data.email || null,
+                profile: data.profile,
+                shifts: data.shifts || {},
+                cashedOutHours: data.cashedOutHours || {},
+            } as UserData;
         }
 
         // If no profile exists, create a default one for the new user.
@@ -403,7 +407,7 @@ const getCurrentPayPeriodIndex = (payPeriods: PayPeriod[]): number => {
 };
 
 // --- CORE CALCULATION LOGIC ---
-const calculateSalaryForPayPeriod = (payPeriod: PayPeriod, allShifts: ShiftsData, profile: ProfileData, allStatHolidays: Record<string, string>): SalaryCalculationResult => {
+const calculateSalaryForPayPeriod = (payPeriod: PayPeriod | null, allShifts: ShiftsData, profile: ProfileData, allStatHolidays: Record<string, string>): SalaryCalculationResult | null => {
     const baseRate = profile?.baseRate;
     const initialResult: SalaryCalculationResult = {
         regularPay: { hours: 77.5, pay: 0 }, // Base hours are fixed for a pay period
@@ -420,6 +424,7 @@ const calculateSalaryForPayPeriod = (payPeriod: PayPeriod, allShifts: ShiftsData
     };
 
     if (!payPeriod || !baseRate || baseRate <= 0 || !profile.workCycleReference) {
+        if (!payPeriod) return null;
         if (baseRate && baseRate > 0) {
             initialResult.regularPay.pay = 77.5 * baseRate;
         }
@@ -726,13 +731,13 @@ const SavingSpinner = ({ message }: { message: string }) => (
 );
 
 const AuthScreen = () => {
-    const [view, setView] = useState('login'); 
+    const [view, setView] = useState('login');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
     const [loading, setLoading] = useState(false);
-    
+
     const resetForm = () => {
         setEmail('');
         setPassword('');
@@ -759,7 +764,7 @@ const AuthScreen = () => {
             setLoading(false);
         }
     };
-    
+
     const handleLoginSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError('');
@@ -1160,31 +1165,6 @@ const ShiftEditor = ({ shiftsForDate, onClose, onSave, isSaving }: ShiftEditorPr
         }
     }, [shiftsForDate]);
 
-    const handleShiftChange = (index: number, field: keyof Shift, value: any) => {
-        if (field === 'type' && value === 'O') {
-            const singleOffShift: Shift[] = [{ type: 'O', category: 'Regular', hasEscort: false, isBanked: false, isBookedOff: false }];
-            setCurrentShifts(singleOffShift);
-            return;
-        }
-
-        const newShifts = [...currentShifts];
-        const currentShift = { ...newShifts[index], [field]: value };
-
-        if (field === 'category' && value === 'Regular') {
-            currentShift.isBanked = false;
-        }
-        
-        newShifts[index] = currentShift;
-        setCurrentShifts(newShifts);
-    };
-
-    const addShift = () => {
-        if (currentShifts.filter(s => s.type !== 'O').length < 2) {
-            const newShifts = currentShifts.filter(s => s.type !== 'O');
-            setCurrentShifts([...newShifts, { type: 'D', category: 'First Overtime', hasEscort: false, isBanked: false, isBookedOff: false }]);
-        }
-    };
-    
     const removeShift = (index: number) => {
         const remainingShifts = currentShifts.filter((_, i) => i !== index);
         if (remainingShifts.length === 0) {
@@ -1194,63 +1174,131 @@ const ShiftEditor = ({ shiftsForDate, onClose, onSave, isSaving }: ShiftEditorPr
         }
     };
 
+    const handleShiftChange = (index: number, field: keyof Shift, value: any) => {
+        // BUG FIX 1: When a shift's type is changed to 'O', it's removed, leaving other shifts untouched.
+        if (field === 'type' && value === 'O') {
+            removeShift(index);
+            return;
+        }
+
+        const newShifts = [...currentShifts];
+        const shiftToUpdate = { ...newShifts[index], [field]: value };
+
+        // Logic: if changing category from 'Regular' on a placeholder 'Off' shift, it becomes a 'Day' shift.
+        if (field === 'category' && newShifts[index].type === 'O' && value !== 'Regular') {
+            shiftToUpdate.type = 'D';
+        }
+
+        // Logic: An overtime shift cannot be "booked off".
+        if (shiftToUpdate.category !== 'Regular') {
+            shiftToUpdate.isBookedOff = false;
+        }
+
+        newShifts[index] = shiftToUpdate;
+        setCurrentShifts(newShifts);
+    };
+
+    const addShift = () => {
+        // If the day is "Off", replace that state with the new shift. Otherwise, add to existing shifts.
+        const baseShifts = currentShifts.length === 1 && currentShifts[0].type === 'O'
+            ? []
+            : currentShifts.filter(s => s.type !== 'O');
+
+        // BUG FIX 2: Intelligently pick the default overtime category to avoid duplicates.
+        const hasFirstOT = baseShifts.some(s => s.category === 'First Overtime');
+        const defaultCategory = hasFirstOT ? 'Second Overtime' : 'First Overtime';
+        
+        setCurrentShifts([
+            ...baseShifts,
+            { type: 'D', category: defaultCategory, hasEscort: false, isBanked: false, isBookedOff: false }
+        ]);
+    };
+
+    const handleSave = () => {
+        const shiftsToSave = currentShifts.filter(shift => shift.type !== 'O');
+        onSave(shiftsToSave);
+    };
+    
+    // Render logic
+    const isDayCurrentlyOff = currentShifts.length === 1 && currentShifts[0].type === 'O';
+    const canAddMoreShifts = currentShifts.filter(s => s.type !== 'O').length < 2;
+
     return (
         <div className="shift-editor-wrapper">
-            {currentShifts.map((shift, index) => (
-                <div key={index} className="shift-editor-item">
-                    <div className="shift-editor-header">
-                        <h4>{`Shift ${index + 1}`}</h4>
-                        {shift.type !== 'O' && <button onClick={() => removeShift(index)} className="remove-shift-btn">Remove</button>}
-                    </div>
-                    <div className="form-group">
-                        <label>Shift Type</label>
-                        <select value={shift.type} onChange={e => handleShiftChange(index, 'type', e.target.value)}>
-                            <option value="D">Day</option>
-                            <option value="A">Afternoon</option>
-                            <option value="N">Night</option>
-                            <option value="O">Off / No Shift</option>
-                        </select>
-                    </div>
-                     {shift.type !== 'O' && <>
-                        <div className="form-group">
-                             <label>Shift Category</label>
-                             <select value={shift.category} onChange={e => handleShiftChange(index, 'category', e.target.value)}>
-                                 <option value="Regular">Regular</option>
-                                 <option value="First Overtime">First Overtime</option>
-                                 <option value="Second Overtime">Second Overtime</option>
-                             </select>
-                         </div>
-                         {shift.category !== 'Regular' &&
-                            <div className="checkbox-group">
-                                <input type="checkbox" id={`isBanked-${index}`} checked={!!shift.isBanked} onChange={e => handleShiftChange(index, 'isBanked', e.target.checked)} />
-                                <label htmlFor={`isBanked-${index}`}>Bank this overtime shift</label>
-                            </div>
-                         }
-                        {shift.category === 'Regular' &&
-                            <div>
-                                <div className="checkbox-group">
-                                    <input type="checkbox" id={`isBookedOff-${index}`} checked={!!shift.isBookedOff} onChange={e => handleShiftChange(index, 'isBookedOff', e.target.checked)} />
-                                    <label htmlFor={`isBookedOff-${index}`}>I booked this day off</label>
-                                </div>
-                                <p className="checkbox-note">Removes shift & weekend premiums.</p>
-                            </div>
-                        }
-                        <div className="checkbox-group">
-                            <input type="checkbox" id={`hasEscort-${index}`} checked={!!shift.hasEscort} onChange={e => handleShiftChange(index, 'hasEscort', e.target.checked)} />
-                            <label htmlFor={`hasEscort-${index}`}>External Escort (Straight Time Meal)</label>
-                        </div>
-                     </>}
+            {isDayCurrentlyOff ? (
+                 <div className="shift-editor-item">
+                    <p>This day is scheduled as 'Off'.</p>
+                    <p className="card-description">Add a shift to record work, or close to keep as is.</p>
                 </div>
-            ))}
+            ) : currentShifts.map((shift, index) => {
+                if (shift.type === 'O') return null;
 
+                const shiftTitle = shift.category === 'Regular' ? 'Regular Shift' : shift.category;
+                const isAnotherRegularShiftPresent = currentShifts.some((s, i) => i !== index && s.category === 'Regular');
+
+                return (
+                    <div key={index} className="shift-editor-item">
+                        <div className="shift-editor-header">
+                            <h4>{shiftTitle}</h4>
+                            <button onClick={() => removeShift(index)} className="remove-shift-btn">Remove</button>
+                        </div>
+                         <div className="form-group">
+                           <label htmlFor={`shift-category-${index}`}>Category</label>
+                           <select 
+                                id={`shift-category-${index}`} 
+                                value={shift.category} 
+                                onChange={e => handleShiftChange(index, 'category', e.target.value as Shift['category'])}
+                                disabled={isAnotherRegularShiftPresent && shift.category !== 'Regular'}
+                            >
+                               <option value="Regular">Regular</option>
+                               <option value="First Overtime">First Overtime</option>
+                               <option value="Second Overtime">Second Overtime</option>
+                           </select>
+                           {isAnotherRegularShiftPresent && shift.category !== 'Regular' && <p className="checkbox-note">Only one Regular shift is allowed.</p>}
+                        </div>
+                        <div className="form-group">
+                           <label htmlFor={`shift-type-${index}`}>Shift Type</label>
+                           <select 
+                                id={`shift-type-${index}`} 
+                                value={shift.type} 
+                                onChange={e => handleShiftChange(index, 'type', e.target.value as Shift['type'])}
+                            >
+                               <option value="D">Day Shift</option>
+                               <option value="A">Afternoon Shift</option>
+                               <option value="N">Night Shift</option>
+                               <option value="O">Off / Clear Shift</option>
+                           </select>
+                           {shift.category !== 'Regular' && <p className="checkbox-note">Type for OT is informational; pay is based on the day's regular shift.</p>}
+                        </div>
+                        <div className="checkbox-group">
+                           <input type="checkbox" id={`has-escort-${index}`} checked={shift.hasEscort} onChange={e => handleShiftChange(index, 'hasEscort', e.target.checked)} />
+                           <label htmlFor={`has-escort-${index}`}>External Escort (STM)</label>
+                        </div>
+                         {shift.category === 'Regular' ? (
+                            <>
+                                <div className="checkbox-group">
+                                    <input type="checkbox" id={`is-booked-off-${index}`} checked={shift.isBookedOff} onChange={e => handleShiftChange(index, 'isBookedOff', e.target.checked)} />
+                                    <label htmlFor={`is-booked-off-${index}`}>Booked Off (e.g. sick, vacation)</label>
+                                </div>
+                                 <p className="checkbox-note">Removes premiums for this shift.</p>
+                             </>
+                         ) : (
+                            <>
+                                <div className="checkbox-group">
+                                    <input type="checkbox" id={`is-banked-${index}`} checked={shift.isBanked} onChange={e => handleShiftChange(index, 'isBanked', e.target.checked)} />
+                                    <label htmlFor={`is-banked-${index}`}>Bank This Overtime</label>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                );
+            })}
             <div className="editor-footer">
-                <div>
-                    {currentShifts.filter(s => s.type !== 'O').length < 2 && <button onClick={addShift} className="secondary-btn">Add Shift</button>}
-                </div>
-                <div>
-                    <button onClick={onClose} className="cancel-btn" disabled={isSaving}>Cancel</button>
-                    <button onClick={() => onSave(currentShifts)} className="save-btn" disabled={isSaving}>
-                        {isSaving ? 'Saving...' : 'Save'}
+                <button onClick={onClose} className="cancel-btn">Cancel</button>
+                <div style={{display: 'flex', gap: '0.5rem'}}>
+                    {canAddMoreShifts && <button onClick={addShift} className="secondary-btn">Add Overtime</button>}
+                    <button onClick={handleSave} className="save-btn" disabled={isSaving || currentShifts.length === 0}>
+                        {isSaving ? 'Saving...' : 'Save Changes'}
                     </button>
                 </div>
             </div>
@@ -1258,963 +1306,828 @@ const ShiftEditor = ({ shiftsForDate, onClose, onSave, isSaving }: ShiftEditorPr
     );
 };
 
-interface PrintablePaystubProps {
-    profile: ProfileData;
-    ledgerEntry: LedgerEntry | null;
-    currentPayPeriod: PayPeriod;
-    previousPayPeriod: PayPeriod | null;
-    username: string;
+interface DashboardProps {
+    profile: ProfileData | null;
+    shifts: ShiftsData;
+    cashedOutHours: CashedOutHoursData;
+    onSaveCashedOutHours: (year: number, ppNumber: number, hours: number) => void;
+    payPeriods: PayPeriod[];
+    allStatHolidays: Record<string, string>;
 }
-const PrintablePaystub = ({ profile, ledgerEntry, currentPayPeriod, previousPayPeriod, username }: PrintablePaystubProps) => {
-    const formatCurrency = (val: number) => (val || 0).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' });
+const Dashboard = ({ profile, shifts, cashedOutHours, onSaveCashedOutHours, payPeriods, allStatHolidays }: DashboardProps) => {
+    const initialPayPeriodIndex = useMemo(() => getCurrentPayPeriodIndex(payPeriods), [payPeriods]);
     
-    if (!ledgerEntry) return null;
+    const [selectedPayPeriodIndex, setSelectedPayPeriodIndex] = useState(initialPayPeriodIndex);
+    const [viewMode, setViewMode] = useState<'paycheck' | 'projection'>('paycheck');
+    
+    const selectedPayPeriod = payPeriods[selectedPayPeriodIndex];
+    const previousPayPeriod = selectedPayPeriodIndex > 0 ? payPeriods[selectedPayPeriodIndex - 1] : null;
 
-    const { data: currentPeriod, grossPay } = ledgerEntry;
-    const prevDeferred = previousPayPeriod ? ledgerEntry.deferredPayFromPrevious : 0;
-    const cashedOutPay = ledgerEntry.cashedOut * profile.baseRate;
+    const currentCalculation = useMemo(() => {
+        if (!profile) return null;
+        return calculateSalaryForPayPeriod(selectedPayPeriod, shifts, profile, allStatHolidays);
+    }, [selectedPayPeriod, shifts, profile, allStatHolidays]);
+    
+    const previousCalculation = useMemo(() => {
+        if (!profile || !previousPayPeriod) return null;
+        return calculateSalaryForPayPeriod(previousPayPeriod, shifts, profile, allStatHolidays);
+    }, [previousPayPeriod, shifts, profile, allStatHolidays]);
 
-    interface PaylineProps { label: string; hours?: number; pay: number; rate: number | string; }
-    const Payline = ({ label, hours, pay, rate }: PaylineProps) => (
-        <tr>
-            <td>
-                {label}
-                {hours && <span className="detail-line">{hours.toFixed(2)} hrs @ {typeof rate === 'string' ? rate : formatCurrency(rate)}/hr</span>}
-            </td>
-            <td>{formatCurrency(pay)}</td>
-        </tr>
-    );
+    const handlePayPeriodChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+        setSelectedPayPeriodIndex(parseInt(e.target.value, 10));
+    };
+    
+    const goToPrevious = () => setSelectedPayPeriodIndex(prev => Math.max(0, prev - 1));
+    const goToNext = () => setSelectedPayPeriodIndex(prev => Math.min(payPeriods.length - 1, prev + 1));
+    
+    if (!profile?.baseRate || profile.baseRate <= 0) {
+        return (
+            <div className="card">
+                <h2>Welcome to the Dashboard</h2>
+                <p>Please set your hourly base rate in your Profile to calculate your pay.</p>
+            </div>
+        );
+    }
 
     return (
-        <div className="printable-area" id="printable-paystub-content">
-            <div className="stub-header">
-                <div><h1>Pay Statement</h1><p>ACS Salary Calculator</p></div>
-                <div>
-                    <p><strong>Pay Period:</strong> {currentPayPeriod.payPeriodOfYear}-{currentPayPeriod.year}</p>
-                    <p><strong>Period Dates:</strong> {currentPayPeriod.start.toLocaleDateString()} to {currentPayPeriod.end.toLocaleDateString()}</p>
-                    <p><strong>Pay Date:</strong> {currentPayPeriod.end.toLocaleDateString()} (Projected)</p>
-                </div>
+        <div>
+            <div className="dashboard-tabs">
+                <button 
+                    className={viewMode === 'paycheck' ? 'active' : ''}
+                    onClick={() => setViewMode('paycheck')}>
+                    Pay Period Details
+                </button>
+                <button 
+                    className={viewMode === 'projection' ? 'active' : ''}
+                    onClick={() => setViewMode('projection')}>
+                    Annual Projection
+                </button>
             </div>
 
-            <div className="stub-employee-info">
-                <div><p><strong>Employee:</strong> {username}</p></div>
-                <div><p><strong>Hourly Rate:</strong> {formatCurrency(profile.baseRate)}</p></div>
-            </div>
-
-            <div className="stub-main-content">
-                <div className="stub-column">
-                    <div className="stub-section-title">Earnings</div>
-                    <table className="stub-table">
-                        <tbody>
-                            <Payline label="Base Salary" hours={currentPeriod.regularPay.hours} pay={currentPeriod.regularPay.pay} rate={profile.baseRate} />
-                            {prevDeferred > 0 && <tr><td>Deferred Pay (from PP {previousPayPeriod?.payPeriodOfYear})</td><td>{formatCurrency(prevDeferred)}</td></tr>}
-                            {cashedOutPay > 0 && <Payline label="Cashed Out Banked OT" hours={ledgerEntry.cashedOut} pay={cashedOutPay} rate={profile.baseRate} />}
-                            <tr className="total-row"><td>Gross Pay</td><td>{formatCurrency(grossPay)}</td></tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-            
-            <div className="stub-section-title">Banked Overtime Summary</div>
-             <table className="stub-table">
-                <thead><tr><th>Description</th><th>Hours</th></tr></thead>
-                <tbody>
-                    <tr><td>Previous Balance</td><td>{ledgerEntry.startBalance.toFixed(2)}</td></tr>
-                    <tr><td>Banked This Period (equiv. hrs)</td><td>+ {ledgerEntry.data.equivalentBankedOtHours.toFixed(2)}</td></tr>
-                    <tr><td>Cashed Out This Period</td><td>- {ledgerEntry.cashedOut.toFixed(2)}</td></tr>
-                    <tr className="total-row"><td>Ending Balance</td><td>{ledgerEntry.endBalance.toFixed(2)}</td></tr>
-                </tbody>
-            </table>
-            
-             <div className="stub-section-title">Memo: Deferred Earnings for Next Paycheck</div>
-             <p style={{fontSize: '12px', color: '#555'}}>The following earnings from the current pay period will be paid on the next paycheck.</p>
-             <table className="stub-table">
-                 <tbody>
-                    {Object.entries(currentPeriod.deferred).map(([key, value]) => {
-                         if(value.pay > 0) return <tr key={key}><td>{key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}</td><td>{formatCurrency(value.pay)}</td></tr>
-                    })}
-                 </tbody>
-             </table>
+            {viewMode === 'paycheck' ? (
+                <>
+                    <div className="dashboard-controls">
+                        <button onClick={goToPrevious} disabled={selectedPayPeriodIndex === 0}>&larr; Previous</button>
+                        <div className="pay-period-selectors">
+                            <select value={selectedPayPeriod.year} onChange={(e) => {
+                                const newYear = parseInt(e.target.value, 10);
+                                const firstIndexOfYear = payPeriods.findIndex(p => p.year === newYear);
+                                setSelectedPayPeriodIndex(firstIndexOfYear);
+                            }}>
+                                {[...new Set(payPeriods.map(p => p.year))].map(year => (
+                                    <option key={year} value={year}>{year}</option>
+                                ))}
+                            </select>
+                            <select value={selectedPayPeriodIndex} onChange={handlePayPeriodChange}>
+                                {payPeriods.filter(p => p.year === selectedPayPeriod.year).map(pp => {
+                                    const ppIndex = payPeriods.findIndex(p => p.number === pp.number);
+                                    return (
+                                        <option key={pp.number} value={ppIndex}>
+                                            PP {pp.payPeriodOfYear}: {pp.start.toLocaleDateString()} - {pp.end.toLocaleDateString()}
+                                        </option>
+                                    )
+                                })}
+                            </select>
+                        </div>
+                        <button onClick={goToNext} disabled={selectedPayPeriodIndex === payPeriods.length - 1}>Next &rarr;</button>
+                    </div>
+                    <PayPeriodDetailView 
+                        payPeriod={selectedPayPeriod}
+                        previousPayPeriod={previousPayPeriod}
+                        profile={profile}
+                        cashedOutHours={cashedOutHours[selectedPayPeriod.number] || 0}
+                        onSaveCashedOutHours={(hours) => onSaveCashedOutHours(selectedPayPeriod.year, selectedPayPeriod.payPeriodOfYear, hours)}
+                        currentCalculation={currentCalculation}
+                        previousCalculation={previousCalculation}
+                    />
+                </>
+            ) : (
+                <AnnualProjectionView 
+                    payPeriods={payPeriods}
+                    profile={profile}
+                    shifts={shifts}
+                    allStatHolidays={allStatHolidays}
+                />
+            )}
         </div>
     );
 };
 
-interface AnnualProjectionChartProps {
-    data: AnnualProjectionData;
+
+interface PayPeriodDetailViewProps {
+    payPeriod: PayPeriod;
+    previousPayPeriod: PayPeriod | null;
     profile: ProfileData;
+    cashedOutHours: number;
+    onSaveCashedOutHours: (hours: number) => void;
+    currentCalculation: SalaryCalculationResult | null;
+    previousCalculation: SalaryCalculationResult | null;
 }
-const AnnualProjectionChart = ({ data, profile }: AnnualProjectionChartProps) => {
-    const formatCurrency = (val: number, compact = false) => {
-        if (compact) {
-            if (val >= 1000) return `${(val/1000).toFixed(0)}k`;
+const PayPeriodDetailView = ({ payPeriod, previousPayPeriod, profile, cashedOutHours, onSaveCashedOutHours, currentCalculation, previousCalculation }: PayPeriodDetailViewProps) => {
+    const printableRef = useRef<HTMLDivElement>(null);
+    const [isPrinting, setIsPrinting] = useState(false);
+
+    const handleDownloadPdf = async () => {
+        if (!printableRef.current || !currentCalculation) return;
+        setIsPrinting(true);
+        try {
+            const canvas = await html2canvas(printableRef.current, { scale: 2 });
+            const imgData = canvas.toDataURL('image/png');
+            const pdf = new jsPDF('p', 'mm', 'a4');
+            const pdfWidth = pdf.internal.pageSize.getWidth();
+            const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+            pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+            pdf.save(`Paystub-PP${payPeriod.payPeriodOfYear}-${payPeriod.year}.pdf`);
+        } catch (error) {
+            console.error("Error generating PDF:", error);
+        } finally {
+            setIsPrinting(false);
         }
-        return (val || 0).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' });
     };
-
-    const { breakdown } = data;
-    const aggregatedData = useMemo(() => [
-        { label: "Base Salary", value: breakdown.baseSalary.pay, color: 'var(--day-shift-color)' },
-        { label: "Overtime", value: breakdown.ot1_5x.pay + breakdown.ot2x.pay, color: 'var(--afternoon-shift-color)' },
-        { label: "Premiums", value: breakdown.afternoon.pay + breakdown.night.pay + breakdown.weekend.pay, color: 'var(--night-shift-color)' },
-        { label: "Bonuses & Other", value: breakdown.statHolidayBonus.pay + breakdown.stm.pay, color: 'var(--stat-holiday-color)' },
-    ].filter(d => d.value > 1), [breakdown]);
-
-    const { width, height } = { width: 800, height: 400 };
-    const margin = { top: 40, right: 20, bottom: 60, left: 60 };
-    const innerWidth = width - margin.left - margin.right;
-    const innerHeight = height - margin.top - margin.bottom;
-
-    const maxValue = Math.max(...aggregatedData.map(d => d.value));
-    const tickCount = 5;
-    const niceMaxValue = Math.ceil(maxValue / (tickCount * 10000)) * (tickCount * 10000);
-    const yTicks = Array.from({ length: tickCount + 1 }, (_, i) => (niceMaxValue / tickCount) * i);
-
-    const barWidth = innerWidth / aggregatedData.length * 0.6;
-    const barGap = innerWidth / aggregatedData.length * 0.4;
+    
+    if (!currentCalculation || !profile) return null;
+    
+    const previousDeferredTotal = previousCalculation ? Object.values(previousCalculation.deferred).reduce((sum, item) => sum + item.pay, 0) : 0;
+    const currentDeferredTotal = Object.values(currentCalculation.deferred).reduce((sum, item) => sum + item.pay, 0);
+    const totalGrossPay = currentCalculation.regularPay.pay + previousDeferredTotal;
     
     return (
-        <div className="annual-chart-container">
-            <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-labelledby="chart-title">
-                <title id="chart-title">Bar chart showing the breakdown of annual projected earnings.</title>
-                <g transform={`translate(${margin.left}, ${margin.top})`}>
-                    <g className="y-axis">
-                        <line x1="0" y1="0" x2="0" y2={innerHeight} className="axis-line" />
-                        {yTicks.map(tickValue => (
-                            <g key={tickValue} className="tick" transform={`translate(0, ${innerHeight - (tickValue / niceMaxValue) * innerHeight})`}>
-                                <line x1="-5" y1="0" x2="0" y2="0" />
-                                <text x="-10" y="0" dy="0.32em" textAnchor="end">{formatCurrency(tickValue, true)}</text>
-                            </g>
-                        ))}
-                    </g>
+        <>
+            <div className="dashboard-grid">
+                <div className="card">
+                    <div className="dashboard-card-header">
+                        <h3>Paycheck for PP {payPeriod.payPeriodOfYear} ({payPeriod.year})</h3>
+                        <button className="pdf-download-btn" onClick={handleDownloadPdf} disabled={isPrinting}>
+                            <DownloadIcon />
+                            {isPrinting ? 'Generating...' : 'Download Statement'}
+                        </button>
+                    </div>
+                     <div className="paycheck-hero">
+                        <span className="paycheck-hero-label">Estimated Gross Pay on Paycheck</span>
+                        <span className="paycheck-hero-amount">${totalGrossPay.toFixed(2)}</span>
+                    </div>
 
-                    <g className="x-axis" transform={`translate(0, ${innerHeight})`}>
-                        <line x1="0" y1="0" x2={innerWidth} y2="0" className="axis-line" />
-                    </g>
+                    <div className="card-item">
+                        <span>Base Salary (Current Period)</span>
+                        <span>${currentCalculation.regularPay.pay.toFixed(2)}</span>
+                    </div>
+                     <div className="card-item">
+                        <span>Deferred Pay (from PP {previousPayPeriod ? previousPayPeriod.payPeriodOfYear : 'N/A'})</span>
+                        <span>${previousDeferredTotal.toFixed(2)}</span>
+                    </div>
+
+                    {previousDeferredTotal > 0 && previousCalculation && (
+                        <div className="deferred-breakdown-list">
+                            {Object.entries(previousCalculation.deferred).map(([key, value]) => value.pay > 0 && (
+                                <div className="card-item" key={key}>
+                                    <span>
+                                        {key.replace(/_/g, ' ').replace('ot1 5x', 'OT 1.5x').replace('ot2x', 'OT 2.0x').replace(/\b\w/g, l => l.toUpperCase())}
+                                        <span className="item-details">{value.hours.toFixed(2)} hrs</span>
+                                    </span>
+                                    <span>+ ${value.pay.toFixed(2)}</span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                <div className="card">
+                    <h3>Current Period Activity</h3>
+                    <div className="card-item">
+                        <span>Deferred to Next Pay Period</span>
+                        <span style={{fontWeight: 'bold'}}>${currentDeferredTotal.toFixed(2)}</span>
+                    </div>
+                     {currentDeferredTotal > 0 && (
+                        <div className="deferred-breakdown-list">
+                            {Object.entries(currentCalculation.deferred).map(([key, value]) => value.pay > 0 && (
+                               <div className="card-item" key={key}>
+                                   <span>
+                                       {key.replace(/_/g, ' ').replace('ot1 5x', 'OT 1.5x').replace('ot2x', 'OT 2.0x').replace(/\b\w/g, l => l.toUpperCase())}
+                                       <span className="item-details">{value.hours.toFixed(2)} hrs</span>
+                                   </span>
+                                   <span>+ ${value.pay.toFixed(2)}</span>
+                               </div>
+                           ))}
+                        </div>
+                    )}
                     
-                    {aggregatedData.map((d, i) => {
-                        const x = i * (barWidth + barGap) + barGap / 2;
-                        const y = innerHeight - (d.value / niceMaxValue) * innerHeight;
-                        const barHeight = (d.value / niceMaxValue) * innerHeight;
-                        return (
-                            <g key={d.label}>
-                                <rect
-                                    x={x}
-                                    y={y}
-                                    width={barWidth}
-                                    height={barHeight}
-                                    fill={d.color}
-                                    className="bar"
-                                >
-                                  <title>{`${d.label}: ${formatCurrency(d.value)}`}</title>
-                                </rect>
-                                <text x={x + barWidth / 2} y={innerHeight + 20} className="bar-label">{d.label}</text>
-                                <text x={x + barWidth / 2} y={y - 8} className="bar-value-label">{formatCurrency(d.value, true)}</text>
-                            </g>
-                        );
-                    })}
+                    <h4 className="card-subtitle" style={{marginTop: '1.5rem', borderTop: '1px solid var(--border-color)', paddingTop: '1.5rem'}}>Banked Overtime</h4>
+                    <div className="card-item" style={{border: 'none'}}>
+                        <span>Hours Banked This Period</span>
+                        <span>{currentCalculation.equivalentBankedOtHours.toFixed(2)} hrs</span>
+                    </div>
+                    <div className="card-input-item">
+                        <label htmlFor="cashed-out-hours">Cashed Out Hours</label>
+                        <input
+                            type="number"
+                            id="cashed-out-hours"
+                            value={cashedOutHours}
+                            onChange={(e) => onSaveCashedOutHours(parseFloat(e.target.value) || 0)}
+                            placeholder="0"
+                        />
+                    </div>
+                    <p className="card-input-note">Enter hours cashed out from your bank this pay period.</p>
+                </div>
+            </div>
+             <div className="printable-area-container">
+                <PrintablePaystub 
+                    ref={printableRef} 
+                    payPeriod={payPeriod} 
+                    calculationResult={currentCalculation} 
+                    profile={profile} 
+                    cashedOutHours={cashedOutHours} 
+                />
+            </div>
+        </>
+    );
+};
+
+
+interface AnnualProjectionViewProps {
+    payPeriods: PayPeriod[];
+    profile: ProfileData;
+    shifts: ShiftsData;
+    allStatHolidays: Record<string, string>;
+}
+const BarChart = ({ data }: { data: { name: string; value: number }[] }) => {
+    const containerRef = useRef<HTMLDivElement>(null);
+    const [width, setWidth] = useState(0);
+    const height = 400;
+
+    useEffect(() => {
+        if (containerRef.current) {
+            const resizeObserver = new ResizeObserver(entries => {
+                if (entries[0]) {
+                    setWidth(entries[0].contentRect.width);
+                }
+            });
+            resizeObserver.observe(containerRef.current);
+            return () => resizeObserver.disconnect();
+        }
+    }, []);
+
+    if (width === 0 || data.length === 0) {
+        return <div ref={containerRef} style={{ width: '100%', height: `${height}px` }} />;
+    }
+
+    const margin = { top: 40, right: 20, bottom: 120, left: 70 };
+    const chartWidth = width - margin.left - margin.right;
+    const chartHeight = height - margin.top - margin.bottom;
+
+    const maxValue = Math.max(...data.map(d => d.value));
+    
+    const barWidth = Math.max(10, (chartWidth / data.length) * 0.7);
+    const barSpacing = chartWidth / data.length;
+
+    const colors = ['#54a0ff', '#ff9f43', '#9c88ff', '#c8a2c8', '#0a84ff', '#ff6b6b', '#2e7d32', '#fd7e14'];
+
+    const yTicks = 5;
+    const yTickValues = Array.from({ length: yTicks + 1 }, (_, i) => (maxValue / yTicks) * i);
+
+    return (
+        <div ref={containerRef} style={{ width: '100%', height: `${height}px`, overflow: 'visible' }}>
+            <svg width={width} height={height} style={{ overflow: 'visible' }}>
+                <g className="y-axis">
+                    {yTickValues.map((tick, i) => (
+                        <g key={i} className="tick">
+                            <line
+                                x1={margin.left} y1={margin.top + chartHeight - (tick / maxValue) * chartHeight}
+                                x2={margin.left - 6} y2={margin.top + chartHeight - (tick / maxValue) * chartHeight}
+                                stroke="var(--border-color)"
+                            />
+                            <text
+                                x={margin.left - 8}
+                                y={margin.top + chartHeight - (tick / maxValue) * chartHeight}
+                                textAnchor="end"
+                                dy="0.32em"
+                                fill="var(--text-secondary)"
+                                fontSize="11"
+                            >
+                                ${tick.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                            </text>
+                        </g>
+                    ))}
+                    <line x1={margin.left} y1={margin.top} x2={margin.left} y2={margin.top + chartHeight} stroke="var(--border-color)"/>
                 </g>
+                <g className="x-axis">
+                    <line x1={margin.left} y1={margin.top + chartHeight} x2={margin.left + chartWidth} y2={margin.top + chartHeight} stroke="var(--border-color)"/>
+                </g>
+                {data.map((d, i) => {
+                    const barHeight = chartHeight * (d.value / maxValue);
+                    if (barHeight <= 0) return null;
+                    const x = margin.left + i * barSpacing + (barSpacing - barWidth) / 2;
+                    const y = margin.top + chartHeight - barHeight;
+                    return (
+                        <g key={d.name} className="bar">
+                            <title>{`${d.name}: $${d.value.toFixed(2)}`}</title>
+                            <rect
+                                x={x}
+                                y={y}
+                                width={barWidth}
+                                height={barHeight}
+                                fill={colors[i % colors.length]}
+                            />
+                            <text
+                                x={x + barWidth / 2}
+                                y={y - 8}
+                                textAnchor="middle"
+                                className="bar-value-label"
+                            >
+                                ${Math.round(d.value).toLocaleString()}
+                            </text>
+                            <text
+                                x={x + barWidth / 2}
+                                y={margin.top + chartHeight + 15}
+                                textAnchor="end"
+                                transform={`rotate(-45, ${x + barWidth / 2}, ${margin.top + chartHeight + 15})`}
+                                className="bar-label"
+                            >
+                                {d.name}
+                            </text>
+                        </g>
+                    );
+                })}
             </svg>
         </div>
     );
 };
-
-interface LedgerPageProps {
-    ledger: LedgerEntry[];
-    currentGlobalPPNumber: number | undefined;
-}
-
-const LedgerPage = React.memo(({ ledger, currentGlobalPPNumber }: LedgerPageProps) => {
-    useEffect(() => {
-        if (ledger.length > 0 && currentGlobalPPNumber) {
-            const activeRow = document.getElementById(`ledger-row-${currentGlobalPPNumber}`);
-            if (activeRow) {
-                activeRow.scrollIntoView({ behavior: 'auto', block: 'center' });
-            }
-        }
-    }, [currentGlobalPPNumber, ledger]);
+const AnnualProjectionView = ({ payPeriods, profile, shifts, allStatHolidays }: AnnualProjectionViewProps) => {
+    const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+    const [viewType, setViewType] = useState<'chart' | 'list'>('chart');
     
-    if (ledger.length === 0) {
+    const availableYears = useMemo(() => [...new Set(payPeriods.map(p => p.year))], [payPeriods]);
+
+    const annualData = useMemo(() => {
+        if (!profile) return null;
+
+        const yearPayPeriods = payPeriods.filter(p => p.year === selectedYear);
+        const projection: AnnualProjectionData = {
+            year: selectedYear,
+            totalGrossPay: 0,
+            breakdown: {
+                baseSalary: { hours: 0, pay: 0 },
+                ot1_5x: { hours: 0, pay: 0 },
+                ot2x: { hours: 0, pay: 0 },
+                afternoon: { hours: 0, pay: 0 },
+                night: { hours: 0, pay: 0 },
+                weekend: { hours: 0, pay: 0 },
+                stm: { hours: 0, pay: 0 },
+                statHolidayBonus: { hours: 0, pay: 0 },
+            }
+        };
+
+        yearPayPeriods.forEach(pp => {
+            const result = calculateSalaryForPayPeriod(pp, shifts, profile, allStatHolidays);
+            if (!result) return;
+            
+            projection.breakdown.baseSalary.pay += result.regularPay.pay;
+            projection.breakdown.baseSalary.hours += result.regularPay.hours;
+
+            for (const key in result.deferred) {
+                const typedKey = key as keyof DeferredPay;
+                projection.breakdown[typedKey].pay += result.deferred[typedKey].pay;
+                projection.breakdown[typedKey].hours += result.deferred[typedKey].hours;
+            }
+        });
+        
+        projection.totalGrossPay = Object.values(projection.breakdown).reduce((sum, item) => sum + item.pay, 0);
+
+        return projection;
+    }, [selectedYear, payPeriods, profile, shifts, allStatHolidays]);
+
+    if (!annualData) return null;
+    
+    const chartData = Object.entries(annualData.breakdown)
+      .map(([name, data]) => ({ name: name.replace(/_/g, ' ').replace('baseSalary', 'Base Salary').replace('ot1 5x', 'OT 1.5x').replace('ot2x', 'OT 2.0x').replace('stm', 'STM').replace('statHolidayBonus', 'Stat Bonus').replace(/\b\w/g, l => l.toUpperCase()), value: data.pay }))
+      .filter(d => d.value > 0)
+      .sort((a,b) => b.value - a.value);
+
+    return (
+        <div className="card card-full-width">
+            <div className="dashboard-card-header">
+                <h3>Annual Projection for {selectedYear}</h3>
+                <div style={{display: 'flex', gap: '1rem', alignItems: 'center'}}>
+                    <select value={selectedYear} onChange={e => setSelectedYear(parseInt(e.target.value, 10))}>
+                        {availableYears.map(y => <option key={y} value={y}>{y}</option>)}
+                    </select>
+                    <div className="view-switcher">
+                        <button className={viewType === 'chart' ? 'active' : ''} onClick={() => setViewType('chart')}><BarChartIcon/> Chart</button>
+                        <button className={viewType === 'list' ? 'active' : ''} onClick={() => setViewType('list')}><ListIcon /> List</button>
+                    </div>
+                </div>
+            </div>
+
+            <div className="paycheck-hero">
+                <span className="paycheck-hero-label">Projected Total Gross Pay for {selectedYear}</span>
+                <span className="paycheck-hero-amount">${annualData.totalGrossPay.toFixed(2)}</span>
+            </div>
+
+            {viewType === 'list' ? (
+                <div>
+                    {chartData.map(item => (
+                        <div key={item.name} className="card-item">
+                            <span>{item.name}</span>
+                            <span>${item.value.toFixed(2)}</span>
+                        </div>
+                    ))}
+                </div>
+            ) : (
+                <div className="annual-chart-container">
+                    <BarChart data={chartData} />
+                </div>
+            )}
+        </div>
+    );
+};
+
+
+interface LedgerProps {
+    profile: ProfileData | null;
+    shifts: ShiftsData;
+    cashedOutHours: CashedOutHoursData;
+    payPeriods: PayPeriod[];
+    allStatHolidays: Record<string, string>;
+}
+const Ledger = ({ profile, shifts, cashedOutHours, payPeriods, allStatHolidays }: LedgerProps) => {
+    const ledgerData = useMemo(() => {
+        if (!profile?.baseRate || profile.baseRate <= 0) return [];
+        
+        let bankBalance = 0;
+        let ytdGross = 0;
+        
+        const sortedPayPeriods = [...payPeriods].sort((a, b) => a.number - b.number);
+        
+        return sortedPayPeriods.map(pp => {
+            const startBalance = bankBalance;
+            const cashedOut = cashedOutHours[pp.number] || 0;
+            const calculation = calculateSalaryForPayPeriod(pp, shifts, profile, allStatHolidays);
+            
+            if (!calculation) return null;
+
+            bankBalance += calculation.equivalentBankedOtHours;
+            bankBalance -= cashedOut;
+
+            const totalDeferredPay = Object.values(calculation.deferred).reduce((sum, item) => sum + item.pay, 0);
+            const grossPay = calculation.regularPay.pay + totalDeferredPay;
+            ytdGross += grossPay;
+            
+            return {
+                ppNumber: pp.payPeriodOfYear,
+                year: pp.year,
+                globalPPNumber: pp.number,
+                data: calculation,
+                cashedOut: cashedOut,
+                startBalance: startBalance,
+                endBalance: bankBalance,
+                grossPay,
+                ytdGross
+            };
+        }).filter(Boolean) as LedgerEntry[];
+    }, [profile, shifts, cashedOutHours, payPeriods, allStatHolidays]);
+
+    if (!profile?.baseRate || profile.baseRate <= 0) {
         return (
             <div>
                 <div className="page-header"><h2>Banked OT Ledger</h2></div>
-                <div className="card" style={{textAlign: 'center', padding: '2rem'}}>
-                    <p>There is no ledger data to display.</p>
-                    <p style={{marginTop: '0.5rem', color: 'var(--text-secondary)'}}>Complete your profile to get started.</p>
+                <div className="card">
+                    <p>Please set your hourly base rate in your Profile to view the ledger.</p>
                 </div>
             </div>
         );
     }
-
+    
     return (
         <div>
             <div className="page-header"><h2>Banked OT Ledger</h2></div>
-            <div className="card ledger-card">
+            <div className="card">
                 <div className="ledger-table">
                     <div className="ledger-row ledger-header">
                         <span>Pay Period</span>
-                        <span>Start Balance</span>
-                        <span>Banked</span>
-                        <span>Cashed Out</span>
-                        <span>End Balance</span>
+                        <span style={{textAlign: 'right'}}>Start Balance</span>
+                        <span style={{textAlign: 'right'}}>Banked</span>
+                        <span style={{textAlign: 'right'}}>Cashed Out</span>
+                        <span style={{textAlign: 'right'}}>End Balance</span>
                     </div>
                     <div className="ledger-body full-page">
-                        {ledger.map((entry: LedgerEntry) => {
-                            const isActive = !!currentGlobalPPNumber && entry.globalPPNumber === currentGlobalPPNumber;
-                            return (
-                                <div 
-                                    className={`ledger-row ${isActive ? 'active' : ''}`} 
-                                    key={entry.globalPPNumber}
-                                    id={`ledger-row-${entry.globalPPNumber}`}
-                                >
-                                    <span data-label="Pay Period">PP {entry.ppNumber} ({entry.year})</span>
-                                    <span data-label="Start Balance">{entry.startBalance.toFixed(2)}</span>
-                                    <span className="added" data-label="Banked">+ {entry.data.equivalentBankedOtHours.toFixed(2)}</span>
-                                    <span className="removed" data-label="Cashed Out">- {entry.cashedOut.toFixed(2)}</span>
-                                    <span data-label="End Balance">{entry.endBalance.toFixed(2)} hrs</span>
-                                </div>
-                            )
-                        })}
-                    </div>
-                </div>
-            </div>
-        </div>
-    );
-});
-
-
-interface DashboardProps {
-    username: string;
-    profile: ProfileData;
-    cashedOutHours: CashedOutHoursData;
-    onCashedOutHoursChange: (data: CashedOutHoursData) => void;
-    payPeriods: PayPeriod[];
-    ledger: LedgerEntry[];
-    calculationEndIndex: number;
-}
-const Dashboard = React.memo(({ username, profile, cashedOutHours, onCashedOutHoursChange, payPeriods, ledger, calculationEndIndex }: DashboardProps) => {
-    const [currentPPIndex, setCurrentPPIndex] = useState(() => getCurrentPayPeriodIndex(payPeriods));
-    const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
-    const [activeTab, setActiveTab] = useState('summary');
-    const [annualViewMode, setAnnualViewMode] = useState('text');
-    const [localCashedOutValue, setLocalCashedOutValue] = useState<string>('');
-
-    const deferredPayMeta = useMemo(() => ({
-        ot1_5x: { label: 'Overtime (1.5x)', rate: profile.baseRate * 1.5 },
-        ot2x: { label: 'Overtime (2.0x)', rate: profile.baseRate * 2.0 },
-        statHolidayBonus: { label: 'Stat Holiday Bonus', rate: profile.baseRate * 0.5 },
-        afternoon: { label: 'Afternoon Differential', rate: '$2.75' },
-        night: { label: 'Night Differential', rate: '$5.00' },
-        weekend: { label: 'Weekend Premium', rate: '$3.25' },
-        stm: { label: 'Straight Time Meal', rate: profile.baseRate },
-    }), [profile.baseRate]);
-
-    useEffect(() => {
-        if (!payPeriods || payPeriods.length === 0) return;
-        const value = cashedOutHours?.[String(payPeriods[currentPPIndex].number)];
-        setLocalCashedOutValue(value ? String(value) : '');
-    }, [currentPPIndex, cashedOutHours, payPeriods]);
-    
-    const handleCashOutInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        setLocalCashedOutValue(e.target.value);
-    };
-
-    useEffect(() => {
-        const timeoutId = setTimeout(() => {
-            if (!payPeriods[currentPPIndex]) return;
-            const currentGlobalPP = payPeriods[currentPPIndex].number;
-            const hours = parseFloat(localCashedOutValue) || 0;
-            const currentHours = cashedOutHours?.[String(currentGlobalPP)] || 0;
-    
-            if (hours !== currentHours) {
-                const newCashedOutHours = {
-                    ...(cashedOutHours || {}),
-                    [String(currentGlobalPP)]: hours < 0 ? 0 : hours,
-                };
-                if (localCashedOutValue === '' || hours === 0) {
-                     delete newCashedOutHours[String(currentGlobalPP)];
-                }
-                onCashedOutHoursChange(newCashedOutHours);
-            }
-        }, 500);
-        return () => clearTimeout(timeoutId);
-    }, [localCashedOutValue, currentPPIndex, cashedOutHours, onCashedOutHoursChange, payPeriods]);
-
-    if (!payPeriods || !payPeriods[currentPPIndex]) {
-        return <div className="card" style={{textAlign: 'center', padding: '2rem'}}>Loading pay period data...</div>;
-    }
-
-    const salaryData = useMemo(() => {
-        if (ledger.length === 0) {
-             if (!profile || !profile.baseRate || profile.baseRate <= 0) return { error: "Please set a valid Base Rate in your Profile." };
-             if (!profile.workCycleReference) return { error: "Please set your Work Cycle to see a projected salary." };
-             return { error: "Calculating salary data..." };
-        }
-        
-        const currentLedgerEntry = ledger.find(l => l.globalPPNumber === payPeriods[currentPPIndex].number);
-        const previousLedgerEntry = currentPPIndex > 0 ? ledger.find(l => l.globalPPNumber === payPeriods[currentPPIndex - 1].number) : null;
-
-        if (!currentLedgerEntry) {
-            return { error: "Pay period data is not available." };
-        }
-        
-        return {
-            error: null,
-            ledgerEntry: currentLedgerEntry,
-            previousLedgerEntry,
-        };
-    }, [currentPPIndex, ledger, profile, payPeriods]);
-    
-    const currentPayPeriod = payPeriods[currentPPIndex];
-    const previousPayPeriod = currentPPIndex > 0 ? payPeriods[currentPPIndex - 1] : null;
-
-    const annualProjectionData = useMemo<AnnualProjectionData | null>(() => {
-        if (activeTab !== 'annual' || ledger.length === 0) return null;
-
-        const projectionYear = currentPayPeriod.year;
-        
-        const totals: DeferredPay & { baseSalary: PayDetails } = {
-            baseSalary: { pay: 0, hours: 0 },
-            ot1_5x: { pay: 0, hours: 0 }, ot2x: { pay: 0, hours: 0 },
-            afternoon: { pay: 0, hours: 0 }, night: { pay: 0, hours: 0 },
-            weekend: { pay: 0, hours: 0 }, stm: { pay: 0, hours: 0 },
-            statHolidayBonus: { pay: 0, hours: 0 }
-        };
-
-        const payPeriodsInYear = ledger.filter(entry => entry.year === projectionYear);
-
-        for (const entry of payPeriodsInYear) {
-            const { data } = entry;
-            totals.baseSalary.pay += data.regularPay.pay;
-            totals.baseSalary.hours += data.regularPay.hours;
-            const deferredKeys: (keyof DeferredPay)[] = ['ot1_5x', 'ot2x', 'afternoon', 'night', 'weekend', 'stm', 'statHolidayBonus'];
-            for (const key of deferredKeys) {
-                totals[key].pay += data.deferred[key].pay;
-                totals[key].hours += data.deferred[key].hours;
-            }
-        }
-        
-        const totalGrossPay = Object.values(totals).reduce((sum, category) => sum + category.pay, 0);
-
-        return { year: projectionYear, totalGrossPay, breakdown: totals };
-    }, [activeTab, currentPayPeriod.year, ledger]);
-    
-    const displayablePayPeriods = useMemo(() => payPeriods.slice(0, calculationEndIndex + 1), [payPeriods, calculationEndIndex]);
-    const availableYears = useMemo(() => [...new Set(displayablePayPeriods.map(p => p.year))], [displayablePayPeriods]);
-    const payPeriodsForYear = useMemo(() => displayablePayPeriods.filter(p => p.year === currentPayPeriod.year), [displayablePayPeriods, currentPayPeriod.year]);
-
-    const handleYearChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-        const year = parseInt(e.target.value, 10);
-        const firstPpOfSelectedYear = displayablePayPeriods.find(p => p.year === year);
-        if (firstPpOfSelectedYear) {
-            const newIndex = payPeriods.findIndex(p => p.number === firstPpOfSelectedYear.number);
-            if (newIndex !== -1) setCurrentPPIndex(newIndex);
-        }
-    };
-
-    const handlePayPeriodChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-        const ppInYear = parseInt(e.target.value, 10);
-        const targetPpIndex = payPeriods.findIndex(p => p.year === currentPayPeriod.year && p.payPeriodOfYear === ppInYear);
-        if (targetPpIndex !== -1) {
-            setCurrentPPIndex(targetPpIndex);
-        }
-    };
-    
-    const formatCurrency = (val: number) => (val || 0).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' });
-    
-    const handleDownloadPdf = async () => {
-        if (isGeneratingPdf || salaryData.error) return;
-        setIsGeneratingPdf(true);
-    
-        setTimeout(async () => {
-            const printableElement = document.getElementById('printable-paystub-content');
-            if (!printableElement) {
-                setIsGeneratingPdf(false);
-                return;
-            }
-    
-            try {
-                const canvas = await html2canvas(printableElement, { scale: 2 });
-                const imgData = canvas.toDataURL('image/png');
-                const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
-    
-                const pdfWidth = pdf.internal.pageSize.getWidth();
-                const pdfHeight = pdf.internal.pageSize.getHeight();
-                const canvasAspectRatio = canvas.width / canvas.height;
-                
-                let imgWidth = pdfWidth - 80;
-                let imgHeight = imgWidth / canvasAspectRatio;
-                
-                if (imgHeight > pdfHeight - 80) {
-                    imgHeight = pdfHeight - 80;
-                    imgWidth = imgHeight * canvasAspectRatio;
-                }
-                
-                const x = (pdfWidth - imgWidth) / 2;
-                const y = 40;
-    
-                pdf.addImage(imgData, 'PNG', x, y, imgWidth, imgHeight);
-                
-                const fileName = `Paystub-PP${currentPayPeriod.payPeriodOfYear}-${currentPayPeriod.year}.pdf`;
-                pdf.save(fileName);
-    
-            } catch (error) {
-                console.error("PDF generation failed:", error);
-                alert("Sorry, there was an an error generating the PDF.");
-            } finally {
-                setIsGeneratingPdf(false);
-            }
-        }, 100); 
-    };
-    
-    const PayDetailLine = ({ label, hours, rate, pay }: { label: string; hours?: number; rate?: number | string; pay: number; }) => (
-        <div className="card-item">
-            <span>
-                {label}
-                {hours > 0 && typeof rate !== 'undefined' && <span className="item-details">{hours.toFixed(2)} hrs @ {typeof rate === 'string' ? rate : formatCurrency(rate)}/hr</span>}
-            </span>
-            <span>{formatCurrency(pay)}</span>
-        </div>
-    );
-    
-    const { ledgerEntry, previousLedgerEntry } = salaryData;
-
-    return (
-        <div>
-            {isGeneratingPdf && ledgerEntry && (
-                <div className="printable-area-container">
-                     <PrintablePaystub 
-                        profile={profile}
-                        ledgerEntry={ledgerEntry}
-                        currentPayPeriod={currentPayPeriod}
-                        previousPayPeriod={previousPayPeriod}
-                        username={username}
-                    />
-                </div>
-            )}
-            <div className="page-header"><h2>Dashboard</h2></div>
-            
-            <div className="dashboard-controls">
-                <button onClick={() => setCurrentPPIndex(i => Math.max(0, i - 1))} disabled={currentPPIndex === 0}>Previous PP</button>
-                <div className="pay-period-selectors">
-                    <select value={currentPayPeriod.year} onChange={handleYearChange} aria-label="Select Year">
-                         {availableYears.map(y => <option key={y} value={y}>{y}</option>)}
-                    </select>
-                     <select value={currentPayPeriod.payPeriodOfYear} onChange={handlePayPeriodChange} aria-label="Select Pay Period">
-                        {payPeriodsForYear.map(pp => (
-                            <option key={pp.payPeriodOfYear} value={pp.payPeriodOfYear}>
-                                PP {pp.payPeriodOfYear}: {pp.start.toLocaleDateString()} - {pp.end.toLocaleDateString()}
-                            </option>
+                        {ledgerData.map(entry => (
+                            <div key={entry.globalPPNumber} className="ledger-row">
+                                <span data-label="Pay Period">{entry.year} - PP {entry.ppNumber}</span>
+                                <span data-label="Start Balance">{entry.startBalance.toFixed(2)} hrs</span>
+                                <span data-label="Banked" className="added">+ {entry.data.equivalentBankedOtHours.toFixed(2)} hrs</span>
+                                <span data-label="Cashed Out" className="removed">- {entry.cashedOut.toFixed(2)} hrs</span>
+                                <span data-label="End Balance">{entry.endBalance.toFixed(2)} hrs</span>
+                            </div>
                         ))}
-                    </select>
+                    </div>
                 </div>
-                <button onClick={() => setCurrentPPIndex(i => Math.min(calculationEndIndex, i + 1))} disabled={currentPPIndex >= calculationEndIndex}>Next PP</button>
             </div>
-            
-            {salaryData.error ? <div className="card" style={{textAlign: 'center', padding: '2rem'}}>{salaryData.error}</div> :
-            <>
-                <div className="dashboard-tabs">
-                    <button className={activeTab === 'summary' ? 'active' : ''} onClick={() => setActiveTab('summary')}>Pay Period Summary</button>
-                    <button className={activeTab === 'annual' ? 'active' : ''} onClick={() => setActiveTab('annual')}>Annual Projection</button>
-                </div>
-                
-                {activeTab === 'summary' && ledgerEntry &&
-                    <div className="dashboard-grid">
-                        <div className="card card-full-width">
-                            <div className="dashboard-card-header">
-                                <h3>Projected Paycheck for PP {currentPayPeriod.payPeriodOfYear} ({currentPayPeriod.year})</h3>
-                                <button onClick={handleDownloadPdf} disabled={isGeneratingPdf || !!salaryData.error} className="pdf-download-btn">
-                                <DownloadIcon /> {isGeneratingPdf ? 'Generating...' : 'Download PDF'}
-                                </button>
-                            </div>
-                            
-                            <div className="paycheck-hero">
-                                <span className="paycheck-hero-label">Projected Gross Pay</span>
-                                <span className="paycheck-hero-amount">{formatCurrency(ledgerEntry.grossPay)}</span>
-                            </div>
-                            
-                            <div className="paycheck-details">
-                                <p className="card-subtitle">Earnings</p>
-                                <PayDetailLine label="Base Salary" hours={ledgerEntry.data.regularPay.hours} rate={profile.baseRate} pay={ledgerEntry.data.regularPay.pay} />
-                                
-                                {previousLedgerEntry && Object.entries(previousLedgerEntry.data.deferred).map(([key, value]) => {
-                                    if (value.pay <= 0) return null;
-                                    const meta = deferredPayMeta[key as keyof DeferredPay];
-                                    if (!meta) return null;
-                                    return (
-                                        <PayDetailLine
-                                            key={`deferred-${key}`}
-                                            label={meta.label}
-                                            hours={value.hours}
-                                            rate={meta.rate}
-                                            pay={value.pay}
-                                        />
-                                    );
-                                })}
-
-                                <div className="card-input-item" style={{borderTop: '1px dashed var(--border-color)', paddingTop: '1.5rem', marginTop: '1rem'}}>
-                                    <label htmlFor="cashed-out-ot">Cashed Out Banked OT (hours)</label>
-                                    <input type="number" id="cashed-out-ot" value={localCashedOutValue} onChange={handleCashOutInputChange} placeholder="0" step="0.01" min="0"/>
-                                </div>
-                                <p className="card-input-note">Cashed out at 1x base rate</p>
-                                {ledgerEntry.cashedOut > 0 && <PayDetailLine label="Cashed Out OT Pay" hours={ledgerEntry.cashedOut} rate={profile.baseRate} pay={ledgerEntry.cashedOut * profile.baseRate} />}
-                                
-                                <div className="card-item total-line"><span>Gross Pay</span><span>{formatCurrency(ledgerEntry.grossPay)}</span></div>
-
-                            </div>
-                        </div>
-
-                        <div className="card">
-                            <div className="dashboard-card-header"><h3>Earnings to be Deferred (from PP {currentPayPeriod.payPeriodOfYear})</h3></div>
-                            <p style={{color: 'var(--text-secondary)', fontSize: '0.9em', marginBottom: '1rem'}}>Note: These amounts will be paid in PP {currentPayPeriod.number + 1 <= payPeriods.length ? (payPeriods[currentPPIndex+1].payPeriodOfYear) : 'Next'}.</p>
-                            
-                            {Object.entries(ledgerEntry.data.deferred).map(([key, value]) => {
-                                if (value.pay <= 0) return null;
-                                const meta = deferredPayMeta[key as keyof DeferredPay];
-                                if (!meta) return null;
-                                return (
-                                    <PayDetailLine 
-                                        key={`current-deferred-${key}`}
-                                        label={meta.label} 
-                                        hours={value.hours} 
-                                        rate={meta.rate}
-                                        pay={value.pay} />
-                                );
-                            })}
-                        </div>
-                    </div>
-                }
-
-                {activeTab === 'annual' && 
-                    <div className="dashboard-grid">
-                        <div className="card card-full-width">
-                            {annualProjectionData ? (
-                                <>
-                                    <div className="dashboard-card-header">
-                                        <h3>Annual Projection for {annualProjectionData.year}</h3>
-                                        <div className="view-switcher">
-                                            <button className={annualViewMode === 'text' ? 'active' : ''} onClick={() => setAnnualViewMode('text')} aria-label="Switch to text view">
-                                                <ListIcon /> Text
-                                            </button>
-                                            <button className={annualViewMode === 'visual' ? 'active' : ''} onClick={() => setAnnualViewMode('visual')} aria-label="Switch to visual view">
-                                                <BarChartIcon /> Visual
-                                            </button>
-                                        </div>
-                                    </div>
-                                    <div className="paycheck-hero">
-                                        <span className="paycheck-hero-label">Projected Annual Gross Pay</span>
-                                        <span className="paycheck-hero-amount">{formatCurrency(annualProjectionData.totalGrossPay)}</span>
-                                    </div>
-
-                                    {annualViewMode === 'text' ? (
-                                        <div className="paycheck-details">
-                                            <p className="card-subtitle">EARNINGS BREAKDOWN</p>
-                                            <PayDetailLine label="Base Salary" hours={annualProjectionData.breakdown.baseSalary.hours} rate={profile.baseRate} pay={annualProjectionData.breakdown.baseSalary.pay} />
-                                            
-                                            {(Object.keys(deferredPayMeta) as (keyof DeferredPay)[]).map(key => {
-                                                const breakdown = annualProjectionData.breakdown as any;
-                                                const value = breakdown[key];
-                                                if (!value || value.pay <= 0) return null;
-                                                const meta = deferredPayMeta[key];
-                                                return (
-                                                    <PayDetailLine 
-                                                        key={`annual-${key}`}
-                                                        label={meta.label}
-                                                        hours={value.hours}
-                                                        rate={meta.rate}
-                                                        pay={value.pay}
-                                                    />
-                                                );
-                                            })}
-                                        </div>
-                                    ) : (
-                                        <AnnualProjectionChart data={annualProjectionData} profile={profile} />
-                                    )}
-
-                                    <p style={{textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '1.5rem'}}>
-                                        Note: This projection is based on the current schedule for the entire year and assumes all overtime is paid out, not banked.
-                                    </p>
-                                </>
-                            ) : (
-                                <div style={{textAlign: 'center', padding: '2rem'}}>
-                                    <p>Complete your profile and schedule to see an annual projection.</p>
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                }
-            </>
-            }
         </div>
     );
-});
-
-// --- Helper to detect auth errors ---
-const isAuthError = (error: any): boolean => {
-    // Supabase throws errors with specific structures. A 401 status is a clear sign.
-    // Also checking for messages is a good fallback for JWT-related issues.
-    return error && (error.status === 401 || /jwt/i.test(error.message));
 };
 
+
+interface PrintablePaystubProps {
+    payPeriod: PayPeriod;
+    calculationResult: SalaryCalculationResult | null;
+    profile: ProfileData | null;
+    cashedOutHours: number;
+}
+const PrintablePaystub = React.forwardRef<HTMLDivElement, PrintablePaystubProps>(({ payPeriod, calculationResult, profile, cashedOutHours }, ref) => {
+    if (!calculationResult || !profile) {
+        return null;
+    }
+    const { regularPay, deferred, equivalentBankedOtHours } = calculationResult;
+    const totalDeferredPay = Object.values(deferred).reduce((sum, item) => sum + item.pay, 0);
+    const totalGrossPay = regularPay.pay + totalDeferredPay;
+
+    return (
+        <div ref={ref} className="printable-area">
+            <div className="stub-header">
+                <h1>Pay Statement</h1>
+                <p>
+                    <strong>Pay Period:</strong> {payPeriod.payPeriodOfYear} ({payPeriod.year})<br />
+                    <strong>Period Dates:</strong> {payPeriod.start.toLocaleDateString()} to {payPeriod.end.toLocaleDateString()}
+                </p>
+            </div>
+            <div className="stub-main-content">
+                <div className="stub-column">
+                    <h3 className="stub-section-title">Earnings</h3>
+                    <table className="stub-table">
+                        <tbody>
+                            <tr><td>Base Salary</td><td>${regularPay.pay.toFixed(2)}</td></tr>
+                             {Object.entries(deferred).map(([key, value]) => value.pay > 0 && (
+                                <tr key={key}>
+                                    <td>
+                                        {key.replace(/_/g, ' ').replace('ot1 5x', 'OT 1.5x').replace('ot2x', 'OT 2.0x').replace(/\b\w/g, l => l.toUpperCase())}
+                                        <span className="detail-line">{value.hours.toFixed(2)} hrs</span>
+                                    </td>
+                                    <td>${value.pay.toFixed(2)}</td>
+                                </tr>
+                            ))}
+                            <tr className="total-row"><td>Gross Pay</td><td>${totalGrossPay.toFixed(2)}</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div className="stub-column">
+                    <h3 className="stub-section-title">Banked Time Summary</h3>
+                     <table className="stub-table">
+                        <tbody>
+                            <tr><td>Hours Banked</td><td>{equivalentBankedOtHours.toFixed(2)}</td></tr>
+                            <tr><td>Hours Cashed Out</td><td>({cashedOutHours.toFixed(2)})</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    );
+});
+
+
 const App = () => {
+    const [session, setSession] = useState<Session | null>(null);
     const [user, setUser] = useState<User | null>(null);
+    const [profile, setProfile] = useState<ProfileData | null>(null);
+    const [shifts, setShifts] = useState<ShiftsData>({});
+    const [cashedOutHours, setCashedOutHours] = useState<CashedOutHoursData>({});
     const [loading, setLoading] = useState(true);
-    const [page, setPage] = useState('dashboard');
-    const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-    const [theme, setTheme] = useState(() => localStorage.getItem('acs-salary-theme') || 'dark');
-    const [databaseSetupError, setDatabaseSetupError] = useState<string | null>(null);
-    const [savingMessage, setSavingMessage] = useState<string | null>(null);
+    const [dbError, setDbError] = useState<string | null>(null);
+    const [isSavingData, setIsSavingData] = useState(false);
+    const [savingMessage, setSavingMessage] = useState('Saving...');
 
-    const toggleTheme = useCallback(() => {
-        setTheme(prevTheme => (prevTheme === 'dark' ? 'light' : 'dark'));
-    }, []);
-
+    const [currentPage, setPage] = useState('dashboard');
+    const [isSidebarOpen, setSidebarOpen] = useState(false);
+    const [theme, setTheme] = useState(() => localStorage.getItem("acs-salary-theme") || "dark");
+    
     useEffect(() => {
         document.documentElement.setAttribute('data-theme', theme);
         localStorage.setItem('acs-salary-theme', theme);
     }, [theme]);
+    
+    const toggleTheme = () => setTheme(prev => prev === "dark" ? "light" : "dark");
 
-    if (!isSupabaseConfigured) {
-        return <ConfigurationScreen />;
-    }
+    // Pay Period and Stat Holiday calculations
+    const { payPeriods, allStatHolidays } = useMemo(() => {
+        const periods: PayPeriod[] = [];
+        const holidays: Record<string, string> = {};
+        const currentYear = new Date().getFullYear();
+        
+        for (let year = currentYear - 1; year <= currentYear + 2; year++) {
+            Object.assign(holidays, getStatHolidaysForYear(year));
+        }
+
+        for (let i = -26; i < 52; i++) {
+            const start = addDays(BASE_PAY_PERIOD_START_DATE, i * PAY_PERIOD_LENGTH_DAYS);
+            const end = addDays(start, PAY_PERIOD_LENGTH_DAYS - 1);
+            const year = start.getFullYear();
+            
+            // Find the first pay period of the year
+            let firstPPofYearStart = new Date(year, 0, 1);
+            while (firstPPofYearStart > BASE_PAY_PERIOD_START_DATE) {
+                firstPPofYearStart = addDays(firstPPofYearStart, -PAY_PERIOD_LENGTH_DAYS);
+            }
+            while (firstPPofYearStart < new Date(year, 0, 1)) {
+                 if(addDays(firstPPofYearStart, PAY_PERIOD_LENGTH_DAYS).getFullYear() === year) {
+                     firstPPofYearStart = addDays(firstPPofYearStart, PAY_PERIOD_LENGTH_DAYS);
+                 } else {
+                     break;
+                 }
+            }
+            if(firstPPofYearStart.getDay() !== 0) {
+                 // Adjust if not a Sunday
+            }
+
+            const diff = Math.round((start.getTime() - firstPPofYearStart.getTime()) / (1000 * 60 * 60 * 24 * 14));
+            
+            periods.push({
+                number: i + 27,
+                payPeriodOfYear: diff + 1,
+                year: start.getFullYear(),
+                start: start,
+                end: end
+            });
+        }
+        return { payPeriods: periods, allStatHolidays: holidays };
+    }, []);
 
     const handleLogout = async () => {
-        setIsSidebarOpen(false); // Good UX for mobile
         await api.logout();
-        setUser(null);
+        setPage('dashboard');
     };
-    
+
     useEffect(() => {
-        const processSession = async (session: Session | null) => {
-            if (session) {
-                try {
-                    const userData = await api.getUserData(session.user.id);
-                    setUser({
-                        uid: session.user.id,
-                        ...userData
-                    });
-                    setDatabaseSetupError(null);
-                } catch (error: any) {
-                    const errorMessage = typeof error?.message === 'string' ? error.message : '';
-                    if (error?.code === '42P01' || errorMessage.includes('relation "public.profiles" does not exist')) {
-                        console.error("Database setup needed:", errorMessage);
-                        setDatabaseSetupError(getDatabaseSetupSql());
-                    } else if (isAuthError(error)) {
-                        console.error("Auth error during data fetch, logging out.", error);
-                        handleLogout(); // fire-and-forget is ok
-                    } else {
-                        console.error("Logging out due to data fetch failure:", error);
-                    }
-                    setUser(null);
+        if (!isSupabaseConfigured) {
+            setLoading(false);
+            return;
+        }
+
+        const checkUser = async () => {
+            setLoading(true);
+            try {
+                const { data: { session: currentSession } } = await supabase.auth.getSession();
+                setSession(currentSession);
+
+                if (currentSession?.user) {
+                    const userData = await api.getUserData(currentSession.user.id);
+                    setUser({ uid: currentSession.user.id, ...userData });
+                    setProfile(userData.profile);
+                    setShifts(userData.shifts || {});
+                    setCashedOutHours(userData.cashedOutHours || {});
                 }
-            } else {
-                setUser(null);
-                setDatabaseSetupError(null);
+            } catch (error: any) {
+                // The error code for a missing table in Postgres is '42P01'.
+                const isMissingTableError = error.code === '42P01' || (error.message && error.message.includes('relation "public.profiles" does not exist'));
+
+                if (isMissingTableError) {
+                    setDbError('missing_table');
+                } else {
+                    // Any other error indicates a critical failure in loading the user's data.
+                    // To prevent the app from running in a broken state, we log the error and log out the user.
+                    // This matches the behavior reported in the error log.
+                    console.error("Error fetching profile:", error);
+                    console.error("Logging out due to data fetch failure:", error);
+                    handleLogout();
+                }
+            } finally {
+                setLoading(false);
             }
-             setLoading(false);
         };
 
-        // Initial session check. This is more reliable than waiting for onAuthStateChange in some cases.
-        supabase.auth.getSession().then(({ data: { session } }) => {
-            processSession(session);
+        checkUser();
+
+        const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+            setSession(session);
+            // If the session is gone, clear all user data.
+            if (!session) {
+                setUser(null);
+                setProfile(null);
+                setShifts({});
+                setCashedOutHours({});
+                setLoading(false);
+            } else if (session?.user && user?.uid !== session.user.id) {
+                // If a new user logs in, re-run the check.
+                 checkUser();
+            }
         });
 
-        // Then, subscribe to subsequent auth changes
-        const { data: { subscription } } = supabase.auth.onAuthStateChange(
-            (_event, session) => {
-                // To prevent a re-render flash on initial load, we check if user is already set.
-                // The getSession() call above will handle the initial state. This handles changes.
-                if (session?.user.id !== user?.uid || (!session && user)) {
-                    setLoading(true);
-                    processSession(session);
-                }
-            }
-        );
-    
         return () => {
-            subscription?.unsubscribe();
+            authListener.subscription.unsubscribe();
         };
-    }, [user]); // Re-run if user object changes from null to session or vice-versa
-
-    // FIX: Proactively refresh session on mobile when app is brought to foreground
-    useEffect(() => {
-        const handleVisibilityChange = async () => {
-            if (document.visibilityState === 'visible' && isSupabaseConfigured) {
-                // This call refreshes the session from localStorage and ensures the
-                // auth token is up-to-date, which is crucial for mobile devices
-                // returning from the background.
-                await supabase.auth.getSession();
-            }
-        };
-    
-        document.addEventListener('visibilitychange', handleVisibilityChange);
-    
-        // Clean up the event listener when the component unmounts
-        return () => {
-            document.removeEventListener('visibilitychange', handleVisibilityChange);
-        };
-    }, []);
-
-    const allStatHolidays = useMemo(() => {
-        let holidays: Record<string, string> = {};
-        const currentYear = new Date().getFullYear();
-        for (let year = currentYear - 10; year <= currentYear + 20; year++) {
-            holidays = { ...holidays, ...getStatHolidaysForYear(year) };
-        }
-        return holidays;
-    }, []);
-
-    const payPeriods = useMemo(() => {
-        let periods: PayPeriod[] = [];
-        let startDate = new Date(BASE_PAY_PERIOD_START_DATE);
-        let payPeriodOfYear = 1;
-        let year = 2025;
-        for (let i = 1; i <= 26 * 30; i++) {
-            const endDate = addDays(startDate, PAY_PERIOD_LENGTH_DAYS - 1);
-            periods.push({ number: i, payPeriodOfYear, year, start: startDate, end: endDate });
-            startDate = addDays(endDate, 1);
-            payPeriodOfYear++;
-            if (payPeriodOfYear > 26) {
-                payPeriodOfYear = 1;
-                year++;
-            }
-        }
-        return periods;
-    }, []);
-    
-    // --- Performance Optimization: Split calculations into two stages ---
-    
-    // Stage 1: Perform the heavy, base calculations for salary.
-    // This only re-runs when the user's profile or shifts change.
-    const baseCalculations = useMemo(() => {
-        if (!user || !user.profile.baseRate || user.profile.baseRate <= 0 || !user.profile.workCycleReference) {
-            return { calculationResults: [], calculationEndIndex: 0 };
-        }
-
-        const today = new Date();
-        const currentPPIndexForRange = payPeriods.findIndex(p => today >= p.start && today <= p.end);
-        const effectiveCurrentPPIndex = currentPPIndexForRange > -1 ? currentPPIndexForRange : 0;
-        const calculationEndIndex = Math.min(effectiveCurrentPPIndex + 52, payPeriods.length - 1);
-        
-        const calculationResults: { pp: PayPeriod, data: SalaryCalculationResult }[] = [];
-        for (let i = 0; i <= calculationEndIndex; i++) {
-            const pp = payPeriods[i];
-            const ppData = calculateSalaryForPayPeriod(pp, user.shifts, user.profile, allStatHolidays);
-            calculationResults.push({ pp, data: ppData });
-        }
-
-        return { calculationResults, calculationEndIndex };
-    }, [user?.profile, user?.shifts, payPeriods, allStatHolidays]);
-
-    // Stage 2: Build the full ledger using the cached base calculations.
-    // This re-runs when the base calculations change OR when cashed out hours change.
-    // It's much faster because it doesn't have to recalculate the salary for every period.
-    const financialData = useMemo(() => {
-        const { calculationResults, calculationEndIndex } = baseCalculations;
-        if (!user || calculationResults.length === 0) {
-             return { ledger: [] as LedgerEntry[], calculationEndIndex };
-        }
-
-        const ledger: LedgerEntry[] = [];
-        let runningBalance = 0;
-        let ytd = { gross: 0 };
-        let lastYear = -1;
-
-        for (let i = 0; i < calculationResults.length; i++) {
-            const { pp, data: ppData } = calculationResults[i];
-
-            if (pp.year !== lastYear) {
-                ytd = { gross: 0 };
-                lastYear = pp.year;
-            }
-
-            const cashedOutHours = user.cashedOutHours?.[String(pp.number)] || 0;
-            const cashedOutPay = cashedOutHours * user.profile.baseRate;
-            
-            const prevDeferred = i > 0 ? ledger[i-1].data.deferred : null;
-            const deferredPayFromPrevious = prevDeferred ? Object.values(prevDeferred).reduce((sum, cat) => sum + cat.pay, 0) : 0;
-            
-            const grossPay = ppData.regularPay.pay + deferredPayFromPrevious + cashedOutPay;
-            
-            ytd.gross += grossPay;
-
-            const startBalance = runningBalance;
-            const endBalance = startBalance + ppData.equivalentBankedOtHours - cashedOutHours;
-    
-            ledger.push({
-                ppNumber: pp.payPeriodOfYear,
-                year: pp.year,
-                globalPPNumber: pp.number,
-                data: ppData,
-                cashedOut: cashedOutHours,
-                startBalance,
-                endBalance,
-                grossPay,
-                deferredPayFromPrevious,
-                ytdGross: ytd.gross
-            });
-            runningBalance = endBalance;
-        }
-        
-        return { ledger, calculationEndIndex };
-    }, [baseCalculations, user?.cashedOutHours, user?.profile?.baseRate]);
+    }, []); // Run only on initial mount.
 
 
     const handleSaveProfile = async (newProfile: ProfileData) => {
-        if (!user || savingMessage) return;
-
-        setSavingMessage("Saving profile...");
-
+        if (!user) return;
+        setIsSavingData(true);
+        setSavingMessage('Saving profile...');
+        setProfile(newProfile);
         try {
             await api.saveUserData(user.uid, { profile: newProfile });
-            // The heavy calculation happens here, while the spinner is visible.
-            setUser(prev => prev ? ({ ...prev, profile: newProfile }) : null);
-        } catch (error: any) {
+        } catch (error) {
             console.error("Failed to save profile:", error);
-            if (isAuthError(error)) {
-                alert("Your session has expired. Please log in again.");
-                handleLogout();
-            } else {
-                alert("Error: Could not save your profile. Please check your connection and try again.");
-                // No rollback needed as state was not updated optimistically.
-            }
         } finally {
-            setSavingMessage(null);
+            setIsSavingData(false);
         }
     };
-
-    const handleSaveShiftsForDate = async (selectedDate: Date, newShiftsFromEditor: Shift[]) => {
-        if (!user || !user.profile || savingMessage) return;
     
-        const isoSelected = toISODateString(selectedDate);
-        const updatedShifts = JSON.parse(JSON.stringify(user.shifts || {}));
-    
-        // Normalize the editor output for comparison. A single 'O' shift means "no working shifts".
-        const normalizedNewShifts = (newShiftsFromEditor.length === 1 && newShiftsFromEditor[0].type === 'O') 
-            ? [] 
-            : newShiftsFromEditor;
-    
-        // Get the default shifts from the pattern for comparison.
-        const defaultShiftsForSelectedDate = getEffectiveShiftsForDate(selectedDate, {}, user.profile);
-    
-        const newConfigIsDefault =
-            JSON.stringify(normalizedNewShifts.sort((a, b) => a.type.localeCompare(b.type))) ===
-            JSON.stringify(defaultShiftsForSelectedDate.sort((a, b) => a.type.localeCompare(b.type)));
-    
-        if (newConfigIsDefault) {
-            delete updatedShifts[isoSelected];
-        } else {
-            updatedShifts[isoSelected] = newShiftsFromEditor;
-        }
+    const handleSaveShifts = async (date: Date, newShifts: Shift[]) => {
+        if (!user) return;
+        setIsSavingData(true);
+        setSavingMessage('Saving schedule...');
         
-        setSavingMessage("Saving schedule...");
+        const isoDate = toISODateString(date);
+        const updatedShifts = { ...shifts };
+
+        if (newShifts.length === 0) {
+            delete updatedShifts[isoDate];
+        } else {
+            updatedShifts[isoDate] = newShifts;
+        }
+
+        setShifts(updatedShifts);
 
         try {
             await api.saveUserData(user.uid, { shifts: updatedShifts });
-            // The heavy calculation happens here, while the spinner is visible.
-            setUser(prev => (prev ? { ...prev, shifts: updatedShifts } : null));
-        } catch (error: any) {
+        } catch (error) {
             console.error("Failed to save shifts:", error);
-             if (isAuthError(error)) {
-                alert("Your session has expired. Please log in again.");
-                handleLogout();
-            } else {
-                alert("Error: Could not save your schedule changes. Please check your connection and try again.");
-                // No rollback needed as state was not updated optimistically.
-            }
+            // Optionally revert state on failure
         } finally {
-            setSavingMessage(null);
+            setIsSavingData(false);
         }
     };
+    
+    const handleSaveCashedOutHours = async (year: number, ppNumber: number, hours: number) => {
+        if (!user) return;
 
-    const handleCashedOutHoursChange = async (newCashedOutHours: CashedOutHoursData) => {
-        if (!user || savingMessage) return;
+        const targetPayPeriod = payPeriods.find(p => p.year === year && p.payPeriodOfYear === ppNumber);
+        if (!targetPayPeriod) return;
 
-        const oldCashedOutHours = user.cashedOutHours;
-        setUser(prev => prev ? ({ ...prev, cashedOutHours: newCashedOutHours }) : null); // Optimistic update
+        setIsSavingData(true);
+        setSavingMessage('Saving...');
 
+        const updatedHours = {
+            ...cashedOutHours,
+            [targetPayPeriod.number]: hours,
+        };
+        setCashedOutHours(updatedHours);
+        
         try {
-            await api.saveUserData(user.uid, { cashedOutHours: newCashedOutHours });
-            // No success alert for debounced auto-save to avoid being annoying.
-        } catch (error: any) {
-            console.error("Failed to auto-save cashed out hours:", error);
-            if (isAuthError(error)) {
-                alert("Your session has expired and auto-save failed. Please log in again.");
-                handleLogout();
-            } else {
-                alert("Auto-save for cashed out hours failed. Your change was not saved. Please check your connection and try again.");
-                setUser(prev => prev ? ({ ...prev, cashedOutHours: oldCashedOutHours }) : null); // Rollback
-            }
+            await api.saveUserData(user.uid, { cashedOutHours: updatedHours });
+        } catch (error) {
+            console.error("Failed to save cashed out hours:", error);
+        } finally {
+            setIsSavingData(false);
         }
     };
 
-    const handleSetPage = (newPage: string) => {
-        setPage(newPage);
-        setIsSidebarOpen(false);
+    const renderCurrentPage = () => {
+        if (!profile) return <LoadingSpinner />;
+
+        switch (currentPage) {
+            case 'dashboard':
+                return <Dashboard profile={profile} shifts={shifts} cashedOutHours={cashedOutHours} onSaveCashedOutHours={handleSaveCashedOutHours} payPeriods={payPeriods} allStatHolidays={allStatHolidays} />;
+            case 'schedule':
+                return <WorkSchedule profile={profile} shifts={shifts} onSaveShifts={handleSaveShifts} payPeriods={payPeriods} allStatHolidays={allStatHolidays} isSaving={isSavingData}/>;
+            case 'ledger':
+                return <Ledger profile={profile} shifts={shifts} cashedOutHours={cashedOutHours} payPeriods={payPeriods} allStatHolidays={allStatHolidays} />;
+            case 'profile':
+                return <Profile profile={profile} onSave={handleSaveProfile} isSaving={isSavingData} />;
+            default:
+                return <h2>Page not found</h2>;
+        }
     };
 
-    if (loading) {
-        return <LoadingSpinner />;
-    }
-
-    if (databaseSetupError) {
-        return <DatabaseSetupScreen sqlScript={databaseSetupError} />;
-    }
-
-    if (!user) {
-        return <AuthScreen />;
-    }
-
-    const currentPPIndex = getCurrentPayPeriodIndex(payPeriods);
-
-    return (
-        <div className="app-container">
-            {savingMessage && <SavingSpinner message={savingMessage} />}
+    if (loading) return <LoadingSpinner />;
+    if (!isSupabaseConfigured) return <ConfigurationScreen />;
+    if (dbError === 'missing_table') return <DatabaseSetupScreen sqlScript={getDatabaseSetupSql()} />;
+    if (!session || !user) return <AuthScreen />;
+    
+    const sidebarAndBackdrop = (
+        <>
             <Sidebar 
-                currentPage={page} 
-                setPage={handleSetPage} 
+                currentPage={currentPage} 
+                setPage={(p) => { setPage(p); setSidebarOpen(false); }} 
                 onLogout={handleLogout} 
                 isOpen={isSidebarOpen}
-                onClose={() => setIsSidebarOpen(false)}
+                onClose={() => setSidebarOpen(false)}
                 theme={theme}
                 toggleTheme={toggleTheme}
             />
-            {isSidebarOpen && <div className="sidebar-backdrop" onClick={() => setIsSidebarOpen(false)}></div>}
+            {isSidebarOpen && <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)}></div>}
+        </>
+    );
+
+    return (
+        <div className="app-container">
+            {isSavingData && <SavingSpinner message={savingMessage}/>}
+            {sidebarAndBackdrop}
             <main className="content">
-                <MobileHeader currentPage={page} onMenuClick={() => setIsSidebarOpen(true)} />
-                {page === 'dashboard' && <Dashboard 
-                    username={user.email || ''}
-                    profile={user.profile} 
-                    cashedOutHours={user.cashedOutHours} 
-                    onCashedOutHoursChange={handleCashedOutHoursChange}
-                    payPeriods={payPeriods}
-                    ledger={financialData.ledger}
-                    calculationEndIndex={financialData.calculationEndIndex}
-                />}
-                {page === 'schedule' && <WorkSchedule 
-                    profile={user.profile} 
-                    shifts={user.shifts} 
-                    onSaveShifts={handleSaveShiftsForDate}
-                    payPeriods={payPeriods}
-                    allStatHolidays={allStatHolidays}
-                    isSaving={!!savingMessage}
-                />}
-                {page === 'profile' && <Profile 
-                    profile={user.profile} 
-                    onSave={handleSaveProfile}
-                    isSaving={!!savingMessage} 
-                />}
-                {page === 'ledger' && <LedgerPage 
-                    ledger={financialData.ledger} 
-                    currentGlobalPPNumber={payPeriods[currentPPIndex]?.number}
-                />}
+                <MobileHeader currentPage={currentPage} onMenuClick={() => setSidebarOpen(true)} />
+                {renderCurrentPage()}
             </main>
         </div>
     );
-};
+}
 
 const root = ReactDOM.createRoot(document.getElementById('root') as HTMLElement);
-root.render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);
+root.render(<App />);
+
