@@ -31,6 +31,7 @@ if ('caches' in window) {
     keys.forEach(key => caches.delete(key));
   });
 }
+
 // --- Supabase Configuration ---
 // IMPORTANT: For local development in AI Studio, replace these placeholders.
 // You can get these from your Supabase project's "Project Settings" > "API".
@@ -1915,33 +1916,27 @@ const App = () => {
             Object.assign(holidays, getStatHolidaysForYear(year));
         }
 
+        const PAY_PERIODS_PER_YEAR = 26;
+
+        // The loop generates 78 pay periods (3 financial years), same as the previous implementation
+        // to ensure stability of the unique `number` key for each pay period.
         for (let i = -26; i < 52; i++) {
+            // `i` is the number of pay periods relative to the start of FY 2025.
+            // i=0 corresponds to the pay period starting on BASE_PAY_PERIOD_START_DATE.
             const start = addDays(BASE_PAY_PERIOD_START_DATE, i * PAY_PERIOD_LENGTH_DAYS);
             const end = addDays(start, PAY_PERIOD_LENGTH_DAYS - 1);
-            const year = start.getFullYear();
-            
-            // Find the first pay period of the year
-            let firstPPofYearStart = new Date(year, 0, 1);
-            while (firstPPofYearStart > BASE_PAY_PERIOD_START_DATE) {
-                firstPPofYearStart = addDays(firstPPofYearStart, -PAY_PERIOD_LENGTH_DAYS);
-            }
-            while (firstPPofYearStart < new Date(year, 0, 1)) {
-                 if(addDays(firstPPofYearStart, PAY_PERIOD_LENGTH_DAYS).getFullYear() === year) {
-                     firstPPofYearStart = addDays(firstPPofYearStart, PAY_PERIOD_LENGTH_DAYS);
-                 } else {
-                     break;
-                 }
-            }
-            if(firstPPofYearStart.getDay() !== 0) {
-                 // Adjust if not a Sunday
-            }
 
-            const diff = Math.round((start.getTime() - firstPPofYearStart.getTime()) / (1000 * 60 * 60 * 24 * 14));
+            // Calculate financial year based on the definition that FY2025 starts on BASE_PAY_PERIOD_START_DATE.
+            const financialYear = 2025 + Math.floor(i / PAY_PERIODS_PER_YEAR);
+            
+            // Calculate pay period number within that financial year (1-26).
+            // The formula handles negative `i` values correctly.
+            const payPeriodOfYear = (i % PAY_PERIODS_PER_YEAR + PAY_PERIODS_PER_YEAR) % PAY_PERIODS_PER_YEAR + 1;
             
             periods.push({
-                number: i + 27,
-                payPeriodOfYear: diff + 1,
-                year: start.getFullYear(),
+                number: i + 27, // Preserves original numbering scheme for data consistency.
+                payPeriodOfYear: payPeriodOfYear,
+                year: financialYear, // The financial year
                 start: start,
                 end: end
             });
@@ -2130,4 +2125,3 @@ const App = () => {
 
 const root = ReactDOM.createRoot(document.getElementById('root') as HTMLElement);
 root.render(<App />);
-
