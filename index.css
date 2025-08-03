@@ -1,5 +1,3 @@
-
-
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 :root {
@@ -266,6 +264,18 @@ button:disabled {
     opacity: 0.7;
 }
 
+.secondary-btn {
+    background: var(--background-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    box-shadow: none;
+}
+.secondary-btn:hover {
+    background: var(--background-primary);
+    transform: none;
+}
+
+
 input, select {
   width: 100%;
   padding: 0.7rem;
@@ -502,6 +512,7 @@ input:focus, select:focus {
   padding: 0;
   border: none;
   font-size: 1.1rem;
+  flex-grow: 1;
 }
 
 .pdf-download-btn {
@@ -563,6 +574,7 @@ input:focus, select:focus {
 }
 .card-item span:first-child { color: var(--text-primary); }
 .card-item span.removed { color: var(--removed-color); }
+.card-item span.added { color: var(--added-color); font-weight: 500;}
 
 .item-details {
   display: block;
@@ -576,13 +588,10 @@ input:focus, select:focus {
 }
 
 .card-subtitle {
-  font-size: 0.8em;
+  font-size: 0.9em;
   font-weight: 500;
   color: var(--text-secondary);
-  text-transform: uppercase;
   margin: 1rem 0 0.25rem;
-  padding-top: 1rem;
-  border-top: 1px dashed var(--border-color);
 }
 
 .card-total {
@@ -617,14 +626,20 @@ input:focus, select:focus {
   width: 100%;
 }
 .deferred-breakdown-list {
-  padding: 0.5rem 0 0.5rem 1.5rem;
-  margin: 0.5rem 0 0 1.5rem;
+  padding: 0.5rem 0 0.5rem 1rem;
+  margin: 0.5rem 0 0 1rem;
   border-left: 2px solid var(--border-color);
 }
+.deferred-breakdown-list.earnings { border-left-color: var(--added-color); }
+.deferred-breakdown-list.deductions { border-left-color: var(--removed-color); }
+
 .deferred-breakdown-list .card-item {
   border-bottom: 1px dashed var(--border-color);
   padding: 0.6rem 0;
   font-size: 0.9em;
+}
+.deferred-breakdown-list .card-item.total {
+    font-weight: bold;
 }
 .deferred-breakdown-list .card-item:last-child {
   border-bottom: none;
@@ -644,6 +659,10 @@ input:focus, select:focus {
     font-size: 0.9em;
     color: var(--text-secondary);
     font-weight: 500;
+    transition: color 0.2s;
+}
+.net-pay-toggle span.active {
+    color: var(--text-primary);
 }
 .switch-container {
     position: relative;
@@ -732,7 +751,7 @@ input:checked + .slider:before {
   text-align: right;
 }
 .ledger-row .added {
-  color: var(--day-shift-color);
+  color: var(--added-color);
   font-weight: 500;
 }
 .ledger-row .removed {
@@ -836,20 +855,79 @@ input:checked + .slider:before {
 .deductions-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 1.5rem;
+    gap: 1.5rem 1.5rem; /* Increased vertical gap */
+}
+.other-deductions-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
     margin-bottom: 1rem;
 }
-.toggle-form-group {
+.other-deduction-item {
     display: flex;
-    justify-content: space-between;
+    gap: 0.75rem;
     align-items: center;
-    margin-bottom: 0.75rem;
 }
-.toggle-form-group .toggle-label {
-    margin: 0;
+.other-deduction-item .other-deduction-name {
+    flex: 2 1 0%;
+}
+.other-deduction-item .input-with-toggle {
+    flex: 1 1 0%;
+    min-width: 150px;
+}
+.remove-deduction-btn {
+    background: none;
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    padding: 0.5rem;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: none;
+    width: 36px;
+    height: 36px;
+}
+.remove-deduction-btn:hover {
+    background-color: var(--danger-color);
+    color: white;
+    border-color: var(--danger-color);
+    transform: none;
+}
+.remove-deduction-btn svg {
+    width: 16px;
+    height: 16px;
+}
+
+.deduction-input-group .form-group {
+    margin-bottom: 0;
+}
+.input-with-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.input-with-toggle input {
+    flex-grow: 1;
+}
+.unit-toggle-btn {
+    flex-shrink: 0;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    font-weight: bold;
+    font-size: 1.1rem;
+    background: var(--background-tertiary);
     color: var(--text-primary);
-    font-weight: 500;
+    border: 1px solid var(--border-color);
+    box-shadow: var(--shadow-sm);
 }
+.unit-toggle-btn:hover {
+    background: var(--background-primary);
+    transform: none;
+    border-color: var(--accent-primary);
+}
+
 
 /* --- Work Schedule --- */
 .schedule-header {
@@ -1026,10 +1104,6 @@ input:checked + .slider:before {
 .editor-footer .cancel-btn {
   background: var(--text-secondary);
   box-shadow: none;
-}
-.editor-footer .secondary-btn {
-    background: var(--background-tertiary);
-    box-shadow: none;
 }
 .editor-footer .save-btn {
   background: var(--accent-gradient);
