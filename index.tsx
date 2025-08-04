@@ -182,13 +182,7 @@ interface AnnualProjectionData {
 const api = {
     register: async (email: string, password: string) => {
         if (!isSupabaseConfigured) throw new Error("Database not configured.");
-        const { data, error } = await supabase.auth.signUp({
-            email,
-            password,
-            options: {
-                emailRedirectTo: window.location.origin
-            }
-        });
+        const { data, error } = await supabase.auth.signUp({ email, password });
         if (error) throw error;
         return { data, error: null };
     },
@@ -1110,7 +1104,7 @@ const DeductionInput = ({ label, deductionValue, onChange }: DeductionInputProps
                 <input
                     type="number"
                     id={inputId}
-                    value={deductionValue.value}
+                    value={deductionValue.value || ''}
                     onChange={handleValueChange}
                     step={deductionValue.isPercentage ? "0.01" : "1"}
                 />
@@ -1227,7 +1221,7 @@ const Profile = React.memo(({ profile, onSave, isSaving }: ProfileProps) => {
               <div className="card">
                 <div className="form-group">
                     <label htmlFor="baseRate">Hourly Base Rate ($)</label>
-                    <input type="number" id="baseRate" value={baseRate} onChange={(e) => setBaseRate(Number(e.target.value))} step="0.01" required />
+                    <input type="number" id="baseRate" value={baseRate || ''} onChange={(e) => setBaseRate(Number(e.target.value))} step="0.01" required />
                 </div>
               </div>
 
@@ -1281,11 +1275,11 @@ const Profile = React.memo(({ profile, onSave, isSaving }: ProfileProps) => {
                  <div className="deductions-grid">
                     <div className="form-group">
                         <label htmlFor="federalTD1">Federal TD1 Claim Amount ($)</label>
-                        <input type="number" id="federalTD1" value={deductions.federalTD1} onChange={e => handleDeductionChange('federalTD1', e.target.value)} step="1" />
+                        <input type="number" id="federalTD1" value={deductions.federalTD1 || ''} onChange={e => handleDeductionChange('federalTD1', e.target.value)} step="1" />
                     </div>
                     <div className="form-group">
                         <label htmlFor="provincialTD1">Provincial TD1 Claim Amount ($)</label>
-                        <input type="number" id="provincialTD1" value={deductions.provincialTD1} onChange={e => handleDeductionChange('provincialTD1', e.target.value)} step="1" />
+                        <input type="number" id="provincialTD1" value={deductions.provincialTD1 || ''} onChange={e => handleDeductionChange('provincialTD1', e.target.value)} step="1" />
                     </div>
                     
                     <DeductionInput 
@@ -1305,7 +1299,7 @@ const Profile = React.memo(({ profile, onSave, isSaving }: ProfileProps) => {
                     />
                      <div className="form-group">
                         <label htmlFor="additionalTax">Additional Tax (per Pay Period)</label>
-                        <input type="number" id="additionalTax" value={deductions.additionalTax} onChange={e => handleDeductionChange('additionalTax', e.target.value)} step="1" />
+                        <input type="number" id="additionalTax" value={deductions.additionalTax || ''} onChange={e => handleDeductionChange('additionalTax', e.target.value)} step="1" />
                     </div>
                  </div>
                  <h4 className="card-subtitle" style={{marginTop: 0, border: 'none', paddingTop: 0}}>Other Recurring Deductions</h4>
@@ -1323,7 +1317,7 @@ const Profile = React.memo(({ profile, onSave, isSaving }: ProfileProps) => {
                                 <input
                                     type="number"
                                     placeholder="Amount"
-                                    value={deduction.value}
+                                    value={deduction.value || ''}
                                     onChange={e => handleOtherDeductionChange(deduction.id, 'value', e.target.value)}
                                     step={deduction.isPercentage ? "0.01" : "1"}
                                 />
