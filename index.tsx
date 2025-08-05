@@ -182,7 +182,13 @@ interface AnnualProjectionData {
 const api = {
     register: async (email: string, password: string) => {
         if (!isSupabaseConfigured) throw new Error("Database not configured.");
-        const { data, error } = await supabase.auth.signUp({ email, password });
+        const { data, error } = await supabase.auth.signUp({
+            email,
+            password,
+            options: {
+                emailRedirectTo: `${window.location.origin}#verified`
+            }
+        });
         if (error) throw error;
         return { data, error: null };
     },
@@ -914,6 +920,14 @@ const AuthScreen = () => {
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
     const [loading, setLoading] = useState(false);
+
+    useEffect(() => {
+        const authAction = sessionStorage.getItem('authAction');
+        if (authAction === 'verified') {
+            setSuccess('Email verified successfully! You can now log in.');
+            sessionStorage.removeItem('authAction');
+        }
+    }, []);
 
     const resetForm = () => {
         setEmail('');
@@ -2409,6 +2423,9 @@ const App = () => {
     const [isSidebarOpen, setSidebarOpen] = useState(false);
     const [theme, setTheme] = useState(() => localStorage.getItem("acs-salary-theme") || "dark");
     
+    const userRef = useRef(user);
+    userRef.current = user;
+    
     useEffect(() => {
         document.documentElement.setAttribute('data-theme', theme);
         localStorage.setItem('acs-salary-theme', theme);
@@ -2452,20 +2469,37 @@ const App = () => {
             setLoading(false);
             return;
         }
+        setLoading(true);
 
-        const checkUser = async () => {
-            setLoading(true);
+        const { data: authListener } = supabase.auth.onAuthStateChange(async (_event, session) => {
+            if (_event === 'SIGNED_IN' && window.location.hash.includes('#verified')) {
+                window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
+                await api.logout();
+                sessionStorage.setItem('authAction', 'verified');
+                return;
+            }
+
+            setSession(session);
+            if (!session) {
+                setUser(null);
+                setProfile(null);
+                setShifts({});
+                setCashedOutHours({});
+                setLoading(false);
+                return;
+            }
+
+            if (userRef.current?.uid === session.user.id) {
+                setLoading(false);
+                return;
+            }
+
             try {
-                const { data: { session: currentSession } } = await supabase.auth.getSession();
-                setSession(currentSession);
-
-                if (currentSession?.user) {
-                    const userData = await api.getUserData(currentSession.user.id);
-                    setUser({ uid: currentSession.user.id, ...userData });
-                    setProfile(userData.profile);
-                    setShifts(userData.shifts || {});
-                    setCashedOutHours(userData.cashedOutHours || {});
-                }
+                const userData = await api.getUserData(session.user.id);
+                setUser({ uid: session.user.id, ...userData });
+                setProfile(userData.profile);
+                setShifts(userData.shifts || {});
+                setCashedOutHours(userData.cashedOutHours || {});
             } catch (error: any) {
                 const isMissingTableError = error.code === '42P01' || (error.message && error.message.includes('relation "public.profiles" does not exist'));
 
@@ -2478,21 +2512,6 @@ const App = () => {
                 }
             } finally {
                 setLoading(false);
-            }
-        };
-
-        checkUser();
-
-        const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
-            setSession(session);
-            if (!session) {
-                setUser(null);
-                setProfile(null);
-                setShifts({});
-                setCashedOutHours({});
-                setLoading(false);
-            } else if (session?.user && user?.uid !== session.user.id) {
-                 checkUser();
             }
         });
 
@@ -2613,6 +2632,9 @@ const App = () => {
         </div>
     );
 }
+
+const root = ReactDOM.createRoot(document.getElementById('root') as HTMLElement);
+root.render(<App />);
 
 const root = ReactDOM.createRoot(document.getElementById('root') as HTMLElement);
 root.render(<App />);
