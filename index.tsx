@@ -86,7 +86,8 @@ interface DeductionSettings {
     federalTD1: number;
     provincialTD1: number;
     additionalTax: number;
-    cppContribution: DeductionValue;
+    // cppContribution is now deprecated and calculated automatically. Kept for backward data compatibility.
+    cppContribution?: DeductionValue; 
     pensionContribution: DeductionValue;
     unionDues: DeductionValue;
     otherDeductions: OtherDeduction[];
@@ -154,13 +155,20 @@ interface LedgerEntry {
     ppNumber: number;
     year: number;
     globalPPNumber: number;
+    start: Date;
+    end: Date;
     earnings: PeriodEarnings;
     cashedOut: number;
     startBalance: number;
     endBalance: number;
-    grossPay: number; // Gross pay of the paycheck for this period
+    grossPay: number; 
     ytdGross: number;
+    deductions: DeductionDetails;
+    netPay: number;
+    ytdCpp: number;
+    ytdEi: number;
 }
+
 
 interface PayPeriod {
     number: number;
@@ -236,9 +244,9 @@ const api = {
             }
             if (data.profile.deductions) {
                 const d = data.profile.deductions;
-                // Backwards compatibility for new DeductionValue object structure
-                if (typeof d.cppContribution !== 'object' || d.cppContribution === null) {
-                    d.cppContribution = { value: (d as any).cppContribution ?? 5.95, isPercentage: true };
+                if (typeof d.cppContribution !== 'undefined') {
+                    // This field is deprecated and will be ignored by new calculation logic.
+                    // We can leave it for now to not break old user data structures if needed.
                 }
                 if (typeof d.pensionContribution !== 'object' || d.pensionContribution === null) {
                     d.pensionContribution = { value: (d as any).pensionContribution ?? 11.39, isPercentage: true };
@@ -269,7 +277,6 @@ const api = {
                     federalTD1: 15705, // 2024 value
                     provincialTD1: 21865, // 2024 AB value
                     additionalTax: 0,
-                    cppContribution: { value: 5.95, isPercentage: true },
                     pensionContribution: { value: 11.39, isPercentage: true },
                     unionDues: { value: 45, isPercentage: false },
                     otherDeductions: []
@@ -308,7 +315,6 @@ const api = {
                     federalTD1: 15705,
                     provincialTD1: 21865,
                     additionalTax: 0,
-                    cppContribution: { value: 5.95, isPercentage: true },
                     pensionContribution: { value: 11.39, isPercentage: true },
                     unionDues: { value: 45, isPercentage: false },
                     otherDeductions: []
@@ -365,24 +371,42 @@ const PAY_PERIOD_LENGTH_DAYS = 14;
 const PAY_PERIODS_PER_YEAR = 26;
 const WORK_CYCLE_LENGTH_DAYS = 9;
 
-// Payroll constants for a given year (e.g., 2024). These should be updated annually.
-const PAYROLL_CONSTANTS_2024 = {
-    EI: { RATE: 0.0166, MAX_INSURABLE_EARNINGS: 63200 },
-    FEDERAL_TAX_BRACKETS: [
-        { upTo: 55867, rate: 0.15 },
-        { upTo: 111733, rate: 0.205 },
-        { upTo: 173205, rate: 0.26 },
-        { upTo: 246752, rate: 0.29 },
-        { upTo: Infinity, rate: 0.33 }
-    ],
-    ALBERTA_TAX_BRACKETS: [
-        { upTo: 148269, rate: 0.10 },
-        { upTo: 177922, rate: 0.12 },
-        { upTo: 237230, rate: 0.13 },
-        { upTo: 355845, rate: 0.14 },
-        { upTo: Infinity, rate: 0.15 }
-    ]
+// Payroll constants for a given year. These should be updated annually.
+const PAYROLL_DATA: { [key: number]: any } = {
+    2024: {
+        EI: { RATE: 0.0166, MAX_INSURABLE_EARNINGS: 63200, MAX_ANNUAL_PREMIUM: 1049.12 },
+        CPP: {
+            RATE: 0.0595,
+            BASIC_EXEMPTION: 3500,
+            YMPE: 68500, // Year's Maximum Pensionable Earnings (Tier 1)
+            RATE2: 0.04,
+            YAMPE: 73200, // Year's Additional Maximum Pensionable Earnings (Tier 2)
+        },
+        FEDERAL_TAX_BRACKETS: [
+            { upTo: 55867, rate: 0.15 },
+            { upTo: 111733, rate: 0.205 },
+            { upTo: 173205, rate: 0.26 },
+            { upTo: 246752, rate: 0.29 },
+            { upTo: Infinity, rate: 0.33 }
+        ],
+        ALBERTA_TAX_BRACKETS: [
+            { upTo: 148269, rate: 0.10 },
+            { upTo: 177922, rate: 0.12 },
+            { upTo: 237230, rate: 0.13 },
+            { upTo: 355845, rate: 0.14 },
+            { upTo: Infinity, rate: 0.15 }
+        ],
+        FEDERAL_TD1: 15705,
+        ALBERTA_TD1: 21865,
+    }
 };
+// Add future years as they become available. Logic will fall back to the last known year.
+PAYROLL_DATA[2025] = PAYROLL_DATA[2024]; // Placeholder for future data
+
+const getPayrollConstantsForYear = (year: number) => {
+    return PAYROLL_DATA[year] || PAYROLL_DATA[Math.max(...Object.keys(PAYROLL_DATA).map(Number))];
+};
+
 
 const toISODateString = (date: Date): string => {
     const d = new Date(date);
@@ -505,19 +529,44 @@ const getCurrentPayPeriodIndex = (payPeriods: PayPeriod[]): number => {
 };
 
 // --- NET PAY CALCULATION LOGIC ---
-const calculateNetPay = (grossPay: number, profile: ProfileData): DeductionDetails => {
-    const settings = profile.deductions;
-    const { EI, FEDERAL_TAX_BRACKETS, ALBERTA_TAX_BRACKETS } = PAYROLL_CONSTANTS_2024;
+interface YTDValues {
+    gross: number;
+    cpp: number;
+    ei: number;
+}
+
+const calculateTotalCppForYear = (annualGross: number, cppConstants: any) => {
+    const { RATE, BASIC_EXEMPTION, YMPE, RATE2, YAMPE } = cppConstants;
     
-    // Pension & Other pre-tax deductions
+    // Tier 1 calculation
+    const cpp1Pensionable = Math.max(0, Math.min(annualGross, YMPE) - BASIC_EXEMPTION);
+    const cpp1Contribution = cpp1Pensionable * RATE;
+
+    // Tier 2 calculation
+    const cpp2Pensionable = Math.max(0, Math.min(annualGross, YAMPE) - YMPE);
+    const cpp2Contribution = cpp2Pensionable * RATE2;
+    
+    return cpp1Contribution + cpp2Contribution;
+};
+
+
+const calculatePaycheckDetails = (
+    grossPay: number,
+    profile: ProfileData,
+    payPeriodYear: number,
+    ytdBefore: YTDValues
+): { deductions: DeductionDetails; ytdAfter: YTDValues } => {
+    const settings = profile.deductions;
+    const CONSTANTS = getPayrollConstantsForYear(payPeriodYear);
+    const { EI, CPP, FEDERAL_TAX_BRACKETS, ALBERTA_TAX_BRACKETS } = CONSTANTS;
+
+    // --- Pension & Other Pre-tax Deductions ---
     const pensionDeduction = settings.pensionContribution.isPercentage
         ? (settings.pensionContribution.value / 100) * grossPay
         : settings.pensionContribution.value;
     
     const otherDeductionsTotal = settings.otherDeductions.reduce((sum, d) => {
-        const deductionAmount = d.isPercentage
-            ? (d.value / 100) * grossPay
-            : d.value;
+        const deductionAmount = d.isPercentage ? (d.value / 100) * grossPay : d.value;
         return sum + deductionAmount;
     }, 0);
 
@@ -525,18 +574,26 @@ const calculateNetPay = (grossPay: number, profile: ProfileData): DeductionDetai
         ? (settings.unionDues.value / 100) * grossPay
         : settings.unionDues.value;
 
-
-    // Gross pay subject to statutory deductions (CPP/EI)
-    const grossForStatDeductions = grossPay; 
+    // --- EI Calculation (YTD Capped) ---
+    const ytdGrossAfter = ytdBefore.gross + grossPay;
+    let eiDeduction = 0;
     
-    // EI Calculation
-    const eiDeduction = Math.min(grossForStatDeductions * EI.RATE, EI.MAX_INSURABLE_EARNINGS * EI.RATE / PAY_PERIODS_PER_YEAR);
-
-    // CPP Calculation
-    const cppDeduction = settings.cppContribution.isPercentage
-        ? (settings.cppContribution.value / 100) * grossPay
-        : settings.cppContribution.value;
+    // Check if the annual premium has already been met
+    if (ytdBefore.ei < EI.MAX_ANNUAL_PREMIUM) {
+        // Determine the earnings for this period that are insurable
+        const insurableEarningsThisPeriod = Math.max(0, Math.min(ytdGrossAfter, EI.MAX_INSURABLE_EARNINGS) - ytdBefore.gross);
+        const potentialEi = insurableEarningsThisPeriod * EI.RATE;
+        // The deduction is the smaller of the potential EI or the remaining room until the annual max
+        eiDeduction = Math.min(potentialEi, EI.MAX_ANNUAL_PREMIUM - ytdBefore.ei);
+    }
     
+    // --- CPP Calculation (YTD Capped, Tiered) ---
+    // Calculate the total CPP that should have been paid by the end of this period
+    const totalCppTarget = calculateTotalCppForYear(ytdGrossAfter, CPP);
+    // The deduction for this period is the difference between the new target and what's already been paid
+    const cppDeduction = Math.max(0, totalCppTarget - ytdBefore.cpp);
+
+    // --- Income Tax Calculation ---
     // Annualized income for tax calculation
     const annualGross = grossPay * PAY_PERIODS_PER_YEAR;
     
@@ -544,10 +601,13 @@ const calculateNetPay = (grossPay: number, profile: ProfileData): DeductionDetai
     const annualPension = pensionDeduction * PAY_PERIODS_PER_YEAR;
     const annualUnionDues = unionDuesDeduction * PAY_PERIODS_PER_YEAR;
     
+    // Estimate annual CPP and EI for tax credits
+    const estimatedAnnualCpp = calculateTotalCppForYear(annualGross, CPP);
+    const estimatedAnnualEi = Math.min(annualGross * EI.RATE, EI.MAX_ANNUAL_PREMIUM);
+
     // Taxable income calculation
     let annualTaxableIncome = annualGross - annualPension - annualUnionDues;
-
-    // Helper to calculate tax based on brackets
+    
     const calculateBracketTax = (income: number, brackets: {upTo: number, rate: number}[]) => {
         let tax = 0;
         let lastTier = 0;
@@ -562,21 +622,27 @@ const calculateNetPay = (grossPay: number, profile: ProfileData): DeductionDetai
     };
 
     // Federal Tax Calculation
-    const federalTD1 = settings.federalTD1;
-    const annualCpp = cppDeduction * PAY_PERIODS_PER_YEAR;
-    const annualEi = eiDeduction * PAY_PERIODS_PER_YEAR;
-    const federalTaxCredits = federalTD1 + annualCpp + annualEi;
-    const federalTaxable = Math.max(0, annualTaxableIncome - federalTaxCredits);
-    const annualFederalTax = calculateBracketTax(federalTaxable, FEDERAL_TAX_BRACKETS);
+    const federalTD1 = settings.federalTD1 || CONSTANTS.FEDERAL_TD1;
+    // Federal tax credit is based on personal amount, CPP, and EI.
+    const federalBasicCredit = federalTD1 * 0.15; // Base rate
+    const federalCppCredit = estimatedAnnualCpp * 0.15;
+    const federalEiCredit = estimatedAnnualEi * 0.15;
+    const totalFederalTaxCredits = federalBasicCredit + federalCppCredit + federalEiCredit;
+    const grossFederalTax = calculateBracketTax(annualTaxableIncome, FEDERAL_TAX_BRACKETS);
+    const annualFederalTax = Math.max(0, grossFederalTax - totalFederalTaxCredits);
     
     // Provincial Tax Calculation (Alberta)
-    const provincialTD1 = settings.provincialTD1;
-    const provincialTaxCredits = provincialTD1 + annualCpp + annualEi;
-    const provincialTaxable = Math.max(0, annualTaxableIncome - provincialTaxCredits);
-    const annualProvincialTax = calculateBracketTax(provincialTaxable, ALBERTA_TAX_BRACKETS);
+    const provincialTD1 = settings.provincialTD1 || CONSTANTS.ALBERTA_TD1;
+    // Provincial tax credit is based on personal amount, CPP, and EI.
+    const provincialBasicCredit = provincialTD1 * 0.10; // Base rate
+    const provincialCppCredit = estimatedAnnualCpp * 0.10;
+    const provincialEiCredit = estimatedAnnualEi * 0.10;
+    const totalProvincialTaxCredits = provincialBasicCredit + provincialCppCredit + provincialEiCredit;
+    const grossProvincialTax = calculateBracketTax(annualTaxableIncome, ALBERTA_TAX_BRACKETS);
+    const annualProvincialTax = Math.max(0, grossProvincialTax - totalProvincialTaxCredits);
     
     const totalAnnualTax = annualFederalTax + annualProvincialTax;
-    const incomeTaxPerPeriod = totalAnnualTax / PAY_PERIODS_PER_YEAR + settings.additionalTax;
+    const incomeTaxPerPeriod = (totalAnnualTax / PAY_PERIODS_PER_YEAR) + settings.additionalTax;
     
     const deductions = {
         cpp: cppDeduction,
@@ -590,8 +656,12 @@ const calculateNetPay = (grossPay: number, profile: ProfileData): DeductionDetai
     const totalDeductions = Object.values(deductions).reduce((sum, val) => sum + val, 0);
     
     return {
-        ...deductions,
-        total: totalDeductions
+        deductions: { ...deductions, total: totalDeductions },
+        ytdAfter: {
+            gross: ytdGrossAfter,
+            cpp: ytdBefore.cpp + cppDeduction,
+            ei: ytdBefore.ei + eiDeduction,
+        }
     };
 };
 
@@ -1220,7 +1290,6 @@ const Profile = React.memo(({ profile, onSave, isSaving }: ProfileProps) => {
                 federalTD1: Number(deductions.federalTD1),
                 provincialTD1: Number(deductions.provincialTD1),
                 additionalTax: Number(deductions.additionalTax),
-                cppContribution: { ...deductions.cppContribution, value: parseFloat(String(deductions.cppContribution.value)) || 0 },
                 pensionContribution: { ...deductions.pensionContribution, value: parseFloat(String(deductions.pensionContribution.value)) || 0 },
                 unionDues: { ...deductions.unionDues, value: parseFloat(String(deductions.unionDues.value)) || 0 },
                 otherDeductions: deductions.otherDeductions.map(d => ({...d, value: Number(d.value) || 0 }))
@@ -1285,7 +1354,7 @@ const Profile = React.memo(({ profile, onSave, isSaving }: ProfileProps) => {
               
               <div className="card">
                  <h3 className="card-header-title">Deductions & Tax Information</h3>
-                 <p className="card-description">Provide your tax and deduction details to estimate your net (take-home) pay. Default values are for 2024.</p>
+                 <p className="card-description">Provide your tax and deduction details to estimate your net (take-home) pay. Default values are for 2024. CPP and EI are calculated automatically based on government rules.</p>
                  <div className="deductions-grid">
                     <div className="form-group">
                         <label htmlFor="federalTD1">Federal TD1 Claim Amount ($)</label>
@@ -1296,11 +1365,6 @@ const Profile = React.memo(({ profile, onSave, isSaving }: ProfileProps) => {
                         <input type="number" id="provincialTD1" value={deductions.provincialTD1 || ''} onChange={e => handleDeductionChange('provincialTD1', e.target.value)} step="1" />
                     </div>
                     
-                    <DeductionInput 
-                        label="CPP Contribution"
-                        deductionValue={deductions.cppContribution}
-                        onChange={newValue => handleDeductionChange('cppContribution', newValue)}
-                    />
                     <DeductionInput 
                         label="Pension Contribution"
                         deductionValue={deductions.pensionContribution}
@@ -1657,13 +1721,11 @@ const ShiftEditor = ({ shiftsForDate, onClose, onSave, isSaving }: ShiftEditorPr
 
 interface DashboardProps {
     profile: ProfileData | null;
-    shifts: ShiftsData;
-    cashedOutHours: CashedOutHoursData;
-    onSaveCashedOutHours: (year: number, ppNumber: number, hours: number) => void;
+    allCalculatedData: LedgerEntry[];
     payPeriods: PayPeriod[];
-    allStatHolidays: Record<string, string>;
+    onSaveCashedOutHours: (year: number, ppNumber: number, hours: number) => void;
 }
-const Dashboard = ({ profile, shifts, cashedOutHours, onSaveCashedOutHours, payPeriods, allStatHolidays }: DashboardProps) => {
+const Dashboard = ({ profile, allCalculatedData, payPeriods, onSaveCashedOutHours }: DashboardProps) => {
     const initialPayPeriodIndex = useMemo(() => getCurrentPayPeriodIndex(payPeriods), [payPeriods]);
     
     const [selectedPayPeriodIndex, setSelectedPayPeriodIndex] = useState(initialPayPeriodIndex);
@@ -1671,50 +1733,8 @@ const Dashboard = ({ profile, shifts, cashedOutHours, onSaveCashedOutHours, payP
     const [showNetPay, setShowNetPay] = useState(false);
     
     const selectedPayPeriod = payPeriods[selectedPayPeriodIndex];
-
-    const allEarnings = useMemo(() => {
-        if (!profile) return [];
-        return payPeriods.map(pp => ({
-            ppNumber: pp.number,
-            year: pp.year,
-            earnings: calculateEarningsForPeriod(pp, shifts, profile, allStatHolidays)
-        }));
-    }, [payPeriods, shifts, profile, allStatHolidays]);
-
-    const currentItem = allEarnings.find(c => c.ppNumber === selectedPayPeriod.number);
-    const currentEarnings = currentItem ? currentItem.earnings : null;
+    const currentData = allCalculatedData.find(d => d.globalPPNumber === selectedPayPeriod.number);
     
-    const previousPayPeriod = selectedPayPeriodIndex > 0 ? payPeriods[selectedPayPeriodIndex - 1] : null;
-    const previousItem = previousPayPeriod ? allEarnings.find(c => c.ppNumber === previousPayPeriod.number) : null;
-    const previousEarnings = previousItem ? previousItem.earnings : null;
-
-    const ledgerData = useMemo(() => {
-        if (!profile?.baseRate || profile.baseRate <= 0) return [];
-        
-        let bankBalance = 0;
-        
-        const sortedPayPeriods = [...payPeriods].sort((a, b) => a.number - b.number);
-        
-        return sortedPayPeriods.map(pp => {
-            const startBalance = bankBalance;
-            const cashedOut = cashedOutHours[pp.number] || 0;
-            const earnings = allEarnings.find(c => c.ppNumber === pp.number)?.earnings;
-            
-            if (!earnings) return null;
-
-            bankBalance += earnings.equivalentBankedOtHours;
-            bankBalance -= cashedOut;
-            
-            return {
-                globalPPNumber: pp.number,
-                startBalance: startBalance,
-                endBalance: bankBalance,
-            };
-        }).filter(Boolean) as { globalPPNumber: number; startBalance: number; endBalance: number; }[];
-    }, [profile, cashedOutHours, payPeriods, allEarnings]);
-
-    const selectedLedgerEntry = ledgerData.find(entry => entry.globalPPNumber === selectedPayPeriod.number);
-
     const handlePayPeriodChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
         setSelectedPayPeriodIndex(parseInt(e.target.value, 10));
     };
@@ -1730,6 +1750,14 @@ const Dashboard = ({ profile, shifts, cashedOutHours, onSaveCashedOutHours, payP
             </div>
         );
     }
+    
+    if (!currentData) {
+        return <LoadingSpinner />;
+    }
+
+    const previousPayPeriod = selectedPayPeriodIndex > 0 ? payPeriods[selectedPayPeriodIndex - 1] : null;
+    const previousCalculatedData = previousPayPeriod ? allCalculatedData.find(d => d.globalPPNumber === previousPayPeriod.number) : null;
+    const previousEarnings = previousCalculatedData ? previousCalculatedData.earnings : null;
 
     return (
         <div>
@@ -1777,20 +1805,18 @@ const Dashboard = ({ profile, shifts, cashedOutHours, onSaveCashedOutHours, payP
                         payPeriod={selectedPayPeriod}
                         previousPayPeriod={previousPayPeriod}
                         profile={profile}
-                        cashedOutHours={cashedOutHours[selectedPayPeriod.number] || 0}
-                        onSaveCashedOutHours={(hours) => onSaveCashedOutHours(selectedPayPeriod.year, selectedPayPeriod.payPeriodOfYear, hours)}
-                        currentEarnings={currentEarnings}
+                        currentData={currentData}
                         previousEarnings={previousEarnings}
-                        bankSummary={selectedLedgerEntry ? { startBalance: selectedLedgerEntry.startBalance, endBalance: selectedLedgerEntry.endBalance } : null}
+                        onSaveCashedOutHours={(hours) => onSaveCashedOutHours(selectedPayPeriod.year, selectedPayPeriod.payPeriodOfYear, hours)}
                         showNetPay={showNetPay}
                         onToggleNetPay={() => setShowNetPay(p => !p)}
                     />
                 </>
             ) : (
                 <AnnualProjectionView 
-                    payPeriods={payPeriods}
                     profile={profile}
-                    allEarnings={allEarnings.filter(c => c.earnings) as Array<{ ppNumber: number; year: number; earnings: PeriodEarnings; }>}
+                    allCalculatedData={allCalculatedData}
+                    payPeriods={payPeriods}
                 />
             )}
         </div>
@@ -1819,26 +1845,21 @@ interface PayPeriodDetailViewProps {
     payPeriod: PayPeriod;
     previousPayPeriod: PayPeriod | null;
     profile: ProfileData;
-    cashedOutHours: number;
-    onSaveCashedOutHours: (hours: number) => void;
-    currentEarnings: PeriodEarnings | null;
+    currentData: LedgerEntry;
     previousEarnings: PeriodEarnings | null;
-    bankSummary: { startBalance: number; endBalance: number; } | null;
+    onSaveCashedOutHours: (hours: number) => void;
     showNetPay: boolean;
     onToggleNetPay: () => void;
 }
-const PayPeriodDetailView = ({ payPeriod, previousPayPeriod, profile, cashedOutHours, onSaveCashedOutHours, currentEarnings, previousEarnings, bankSummary, showNetPay, onToggleNetPay }: PayPeriodDetailViewProps) => {
+const PayPeriodDetailView = ({ payPeriod, previousPayPeriod, profile, currentData, previousEarnings, onSaveCashedOutHours, showNetPay, onToggleNetPay }: PayPeriodDetailViewProps) => {
     const printableRef = useRef<HTMLDivElement>(null);
     const [isPrinting, setIsPrinting] = useState(false);
     
-    if (!currentEarnings || !profile) return null;
+    if (!currentData.earnings || !profile) return null;
 
-    // --- Paycheck Calculation ---
+    const { earnings: currentEarnings, grossPay, netPay, deductions, startBalance, endBalance, cashedOut } = currentData;
     const deferredPayFromPrevious = previousEarnings ? Object.values(previousEarnings.deferred).reduce((sum, item) => sum + item.pay, 0) : 0;
-    const grossPayForPaycheck = currentEarnings.regularPay.pay + deferredPayFromPrevious;
-    const deductionsForPaycheck = calculateNetPay(grossPayForPaycheck, profile);
-    const netPayForPaycheck = grossPayForPaycheck - deductionsForPaycheck.total;
-
+    
     const handleDownloadPdf = async () => {
         if (!printableRef.current) return;
         setIsPrinting(true);
@@ -1858,7 +1879,7 @@ const PayPeriodDetailView = ({ payPeriod, previousPayPeriod, profile, cashedOutH
     };
     
     const heroLabel = showNetPay ? 'Estimated Net Pay (Take-Home)' : 'Estimated Gross Pay';
-    const heroAmount = showNetPay ? netPayForPaycheck : grossPayForPaycheck;
+    const heroAmount = showNetPay ? netPay : grossPay;
     
     return (
         <>
@@ -1903,15 +1924,15 @@ const PayPeriodDetailView = ({ payPeriod, previousPayPeriod, profile, cashedOutH
                         <>
                             <h4 className="card-subtitle" style={{marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)'}}>Deductions on This Paycheck</h4>
                             <div className="deferred-breakdown-list deductions">
-                                {Object.entries(deductionsForPaycheck).filter(([k,v]) => k !== 'total' && v > 0).map(([key, value]) => (
+                                {Object.entries(deductions).filter(([k,v]) => k !== 'total' && v > 0).map(([key, value]) => (
                                     <div className="card-item" key={key}>
-                                        <span>{key.replace(/_/g, ' ').replace('incomeTax', 'Income Tax').replace(/\b\w/g, l => l.toUpperCase())}</span>
+                                        <span>{key.replace(/_/g, ' ').replace('incomeTax', 'Income Tax').replace(/cpp/i, 'CPP').replace(/ei/i, 'EI').replace(/\b\w/g, l => l.toUpperCase())}</span>
                                         <span className="removed">- ${value.toFixed(2)}</span>
                                     </div>
                                 ))}
                                 <div className="card-item total">
                                     <span>Total Deductions</span>
-                                    <span className="removed">- ${deductionsForPaycheck.total.toFixed(2)}</span>
+                                    <span className="removed">- ${deductions.total.toFixed(2)}</span>
                                 </div>
                             </div>
                         </>
@@ -1948,7 +1969,7 @@ const PayPeriodDetailView = ({ payPeriod, previousPayPeriod, profile, cashedOutH
                         <input
                             type="number"
                             id="cashed-out-hours"
-                            value={cashedOutHours}
+                            value={cashedOut}
                             onChange={(e) => onSaveCashedOutHours(parseFloat(e.target.value) || 0)}
                             placeholder="0"
                         />
@@ -1963,8 +1984,11 @@ const PayPeriodDetailView = ({ payPeriod, previousPayPeriod, profile, cashedOutH
                     currentEarnings={currentEarnings} 
                     previousEarnings={previousEarnings}
                     profile={profile} 
-                    cashedOutHours={cashedOutHours} 
-                    bankSummary={bankSummary}
+                    cashedOutHours={cashedOut} 
+                    deductionsOnStub={deductions}
+                    grossPayOnStub={grossPay}
+                    netPayOnStub={netPay}
+                    bankSummary={{ startBalance, endBalance }}
                 />
             </div>
         </>
@@ -1975,12 +1999,9 @@ const PayPeriodDetailView = ({ payPeriod, previousPayPeriod, profile, cashedOutH
 interface AnnualProjectionViewProps {
     payPeriods: PayPeriod[];
     profile: ProfileData;
-    allEarnings: Array<{ 
-        ppNumber: number; 
-        year: number; 
-        earnings: PeriodEarnings; 
-    }>;
+    allCalculatedData: LedgerEntry[];
 }
+
 const BarChart = ({ data }: { data: { name: string; value: number }[] }) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const [width, setWidth] = useState(0);
@@ -2083,7 +2104,7 @@ const BarChart = ({ data }: { data: { name: string; value: number }[] }) => {
         </div>
     );
 };
-const AnnualProjectionView = ({ payPeriods, profile, allEarnings }: AnnualProjectionViewProps) => {
+const AnnualProjectionView = ({ payPeriods, profile, allCalculatedData }: AnnualProjectionViewProps) => {
     const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
     const [viewType, setViewType] = useState<'chart' | 'list'>('chart');
     const [showNet, setShowNet] = useState(false);
@@ -2109,41 +2130,24 @@ const AnnualProjectionView = ({ payPeriods, profile, allEarnings }: AnnualProjec
             }
         };
 
-        // Create a map for quick lookups
-        const earningsMap = new Map(allEarnings.map(item => [item.ppNumber, item.earnings]));
-        const payPeriodsInYear = payPeriods.filter(p => p.year === selectedYear);
+        const dataForYear = allCalculatedData.filter(d => d.year === selectedYear);
 
-        payPeriodsInYear.forEach(pp => {
-            const currentEarnings = earningsMap.get(pp.number);
-            if (!currentEarnings) return;
-
-            // Find the global index of the previous pay period to get its earnings
-            const globalPpIndex = payPeriods.findIndex(p => p.number === pp.number);
-            const previousPayPeriod = globalPpIndex > 0 ? payPeriods[globalPpIndex - 1] : null;
-            const previousEarnings = previousPayPeriod ? earningsMap.get(previousPayPeriod.number) : null;
+        dataForYear.forEach(item => {
+            projection.totalGrossPay += item.grossPay;
+            projection.totalNetPay += item.netPay;
             
-            // Calculate paycheck
-            const deferredFromPreviousPay = previousEarnings ? Object.values(previousEarnings.deferred).reduce((s, i) => s + i.pay, 0) : 0;
-            const grossPay = currentEarnings.regularPay.pay + deferredFromPreviousPay;
-            const deductions = calculateNetPay(grossPay, profile);
-            const netPay = grossPay - deductions.total;
+            projection.breakdown.baseSalary.pay += item.earnings.regularPay.pay;
+            projection.breakdown.baseSalary.hours += item.earnings.regularPay.hours;
 
-            projection.totalGrossPay += grossPay;
-            projection.totalNetPay += netPay;
-            
-            // Breakdown is based on what is EARNED during the periods of that year
-            projection.breakdown.baseSalary.pay += currentEarnings.regularPay.pay;
-            projection.breakdown.baseSalary.hours += currentEarnings.regularPay.hours;
-
-            for (const key in currentEarnings.deferred) {
+            for (const key in item.earnings.deferred) {
                 const typedKey = key as keyof DeferredPay;
-                projection.breakdown[typedKey].pay += currentEarnings.deferred[typedKey].pay;
-                projection.breakdown[typedKey].hours += currentEarnings.deferred[typedKey].hours;
+                projection.breakdown[typedKey].pay += item.earnings.deferred[typedKey].pay;
+                projection.breakdown[typedKey].hours += item.earnings.deferred[typedKey].hours;
             }
         });
 
         return projection;
-    }, [selectedYear, profile, allEarnings, payPeriods]);
+    }, [selectedYear, profile, allCalculatedData]);
 
     if (!annualData) return null;
 
@@ -2202,56 +2206,9 @@ const AnnualProjectionView = ({ payPeriods, profile, allEarnings }: AnnualProjec
 
 interface LedgerProps {
     profile: ProfileData | null;
-    shifts: ShiftsData;
-    cashedOutHours: CashedOutHoursData;
-    payPeriods: PayPeriod[];
-    allStatHolidays: Record<string, string>;
+    allCalculatedData: LedgerEntry[];
 }
-const Ledger = ({ profile, shifts, cashedOutHours, payPeriods, allStatHolidays }: LedgerProps) => {
-    const ledgerData = useMemo(() => {
-        if (!profile?.baseRate || profile.baseRate <= 0) return [];
-
-        const sortedPayPeriods = [...payPeriods].sort((a, b) => a.number - b.number);
-
-        // First, calculate earnings for all periods
-        const allEarnings = sortedPayPeriods.map(pp => ({
-            ...pp,
-            earnings: calculateEarningsForPeriod(pp, shifts, profile, allStatHolidays)
-        }));
-        
-        let bankBalance = 0;
-        let ytdGross = 0;
-
-        return allEarnings.map((pp, index) => {
-            const currentEarnings = pp.earnings;
-            if (!currentEarnings) return null;
-
-            const startBalance = bankBalance;
-            const cashedOut = cashedOutHours[pp.number] || 0;
-            
-            bankBalance += currentEarnings.equivalentBankedOtHours;
-            bankBalance -= cashedOut;
-
-            // Calculate gross pay for the paycheck of this period
-            const previousEarnings = index > 0 ? allEarnings[index - 1].earnings : null;
-            const deferredFromPreviousPay = previousEarnings ? Object.values(previousEarnings.deferred).reduce((s, i) => s + i.pay, 0) : 0;
-            const grossPayForPaycheck = currentEarnings.regularPay.pay + deferredFromPreviousPay;
-            
-            ytdGross += grossPayForPaycheck;
-            
-            return {
-                ppNumber: pp.payPeriodOfYear,
-                year: pp.year,
-                globalPPNumber: pp.number,
-                earnings: currentEarnings,
-                cashedOut: cashedOut,
-                startBalance: startBalance,
-                endBalance: bankBalance,
-                grossPay: grossPayForPaycheck,
-                ytdGross
-            };
-        }).filter(Boolean) as LedgerEntry[];
-    }, [profile, shifts, cashedOutHours, payPeriods, allStatHolidays]);
+const Ledger = ({ profile, allCalculatedData }: LedgerProps) => {
 
     if (!profile?.baseRate || profile.baseRate <= 0) {
         return (
@@ -2262,6 +2219,10 @@ const Ledger = ({ profile, shifts, cashedOutHours, payPeriods, allStatHolidays }
                 </div>
             </div>
         );
+    }
+    
+    if (!allCalculatedData || allCalculatedData.length === 0) {
+        return <LoadingSpinner />;
     }
     
     return (
@@ -2277,7 +2238,7 @@ const Ledger = ({ profile, shifts, cashedOutHours, payPeriods, allStatHolidays }
                         <span style={{textAlign: 'right'}}>End Balance</span>
                     </div>
                     <div className="ledger-body full-page">
-                        {ledgerData.map(entry => (
+                        {allCalculatedData.map(entry => (
                             <div key={entry.globalPPNumber} className="ledger-row">
                                 <span data-label="Pay Period">{entry.year} - PP {entry.ppNumber}</span>
                                 <span data-label="Start Balance">{entry.startBalance.toFixed(2)} hrs</span>
@@ -2300,24 +2261,17 @@ interface PrintablePaystubProps {
     previousEarnings: PeriodEarnings | null;
     profile: ProfileData | null;
     cashedOutHours: number;
+    deductionsOnStub: DeductionDetails;
+    grossPayOnStub: number;
+    netPayOnStub: number;
     bankSummary: { startBalance: number; endBalance: number; } | null;
 }
-const PrintablePaystub = React.forwardRef<HTMLDivElement, PrintablePaystubProps>(({ payPeriod, currentEarnings, previousEarnings, profile, cashedOutHours, bankSummary }, ref) => {
+const PrintablePaystub = React.forwardRef<HTMLDivElement, PrintablePaystubProps>(({ payPeriod, currentEarnings, previousEarnings, profile, cashedOutHours, deductionsOnStub, grossPayOnStub, netPayOnStub, bankSummary }, ref) => {
     if (!currentEarnings || !profile) {
         return null;
     }
 
-    // --- Paycheck Calculation for Stub ---
     const deferredFromPrevious = previousEarnings?.deferred;
-
-    const totalDeferredFromPrevious = deferredFromPrevious
-        ? Object.values(deferredFromPrevious).reduce((sum, item) => sum + item.pay, 0)
-        : 0;
-
-    const grossPayOnStub = currentEarnings.regularPay.pay + totalDeferredFromPrevious;
-    const deductionsOnStub = calculateNetPay(grossPayOnStub, profile);
-    const netPayOnStub = grossPayOnStub - deductionsOnStub.total;
-
     const { deferred: deferredToNext, equivalentBankedOtHours } = currentEarnings;
     const totalDeferredToNext = Object.values(deferredToNext).reduce((sum, item) => sum + item.pay, 0);
 
@@ -2356,7 +2310,7 @@ const PrintablePaystub = React.forwardRef<HTMLDivElement, PrintablePaystubProps>
                         <tbody>
                              {Object.entries(deductionsOnStub).filter(([k,v]) => k !== 'total' && v > 0).map(([key, value]) => (
                                 <tr key={key}>
-                                    <td>{key.replace(/_/g, ' ').replace('incomeTax', 'Income Tax').replace(/\b\w/g, l => l.toUpperCase())}</td>
+                                    <td>{key.replace(/_/g, ' ').replace('incomeTax', 'Income Tax').replace(/cpp/i, 'CPP').replace(/ei/i, 'EI').replace(/\b\w/g, l => l.toUpperCase())}</td>
                                     <td>${(value as number).toFixed(2)}</td>
                                 </tr>
                             ))}
@@ -2407,6 +2361,91 @@ const PrintablePaystub = React.forwardRef<HTMLDivElement, PrintablePaystubProps>
     );
 });
 
+// This custom hook centralizes all payroll calculations.
+const usePayrollCalculations = (
+    profile: ProfileData | null, 
+    shifts: ShiftsData, 
+    cashedOutHours: CashedOutHoursData, 
+    payPeriods: PayPeriod[], 
+    allStatHolidays: Record<string, string>
+): LedgerEntry[] => {
+    return useMemo(() => {
+        if (!profile?.baseRate || profile.baseRate <= 0) return [];
+
+        const sortedPayPeriods = [...payPeriods].sort((a, b) => a.number - b.number);
+        
+        const annualData: { [year: number]: { ytd: YTDValues, bankBalance: number } } = {};
+
+        const allEarnings = sortedPayPeriods.map(pp => ({
+            pp,
+            earnings: calculateEarningsForPeriod(pp, shifts, profile, allStatHolidays)
+        }));
+
+        return allEarnings.map((item, index) => {
+            const { pp, earnings } = item;
+            if (!earnings) return null;
+
+            // Initialize YTD and bank balance for a new year
+            if (!annualData[pp.year]) {
+                annualData[pp.year] = { 
+                    ytd: { gross: 0, cpp: 0, ei: 0 },
+                    // Carry over bank balance from the end of the previous year
+                    bankBalance: pp.year > Math.min(...Object.keys(annualData).map(Number)) 
+                        ? annualData[pp.year - 1]?.bankBalance || 0 
+                        : 0
+                };
+            }
+            
+            let currentYearData = annualData[pp.year];
+
+            // Calculate gross pay for the paycheck of this period
+            const previousEarnings = index > 0 ? allEarnings[index - 1].earnings : null;
+            const deferredFromPreviousPay = (previousEarnings && allEarnings[index-1].pp.year === pp.year) 
+                ? Object.values(previousEarnings.deferred).reduce((s, i) => s + i.pay, 0) 
+                : 0;
+
+            const grossPayForPaycheck = earnings.regularPay.pay + deferredFromPreviousPay;
+
+            // Calculate deductions and new YTD values
+            const { deductions, ytdAfter } = calculatePaycheckDetails(grossPayForPaycheck, profile, pp.year, currentYearData.ytd);
+
+            const netPay = grossPayForPaycheck - deductions.total;
+
+            const startBalance = currentYearData.bankBalance;
+            const cashedOutValue = Object.entries(cashedOutHours)
+                .find(([key]) => key === `${pp.year}-${pp.payPeriodOfYear}`);
+            const cashedOut = cashedOutValue ? cashedOutValue[1] : 0;
+            
+            let newBankBalance = startBalance + earnings.equivalentBankedOtHours - cashedOut;
+            
+            const ledgerEntry: LedgerEntry = {
+                ppNumber: pp.payPeriodOfYear,
+                year: pp.year,
+                globalPPNumber: pp.number,
+                start: pp.start,
+                end: pp.end,
+                earnings: earnings,
+                cashedOut: cashedOut,
+                startBalance: startBalance,
+                endBalance: newBankBalance,
+                grossPay: grossPayForPaycheck,
+                ytdGross: ytdAfter.gross,
+                deductions: deductions,
+                netPay: netPay,
+                ytdCpp: ytdAfter.cpp,
+                ytdEi: ytdAfter.ei,
+            };
+            
+            // Update YTD and bank balance for the current year for the next iteration
+            currentYearData.ytd = ytdAfter;
+            currentYearData.bankBalance = newBankBalance;
+            
+            return ledgerEntry;
+        }).filter(Boolean) as LedgerEntry[];
+
+    }, [profile, shifts, cashedOutHours, payPeriods, allStatHolidays]);
+};
+
 
 const App = () => {
     const [session, setSession] = useState<Session | null>(null);
@@ -2442,14 +2481,29 @@ const App = () => {
             Object.assign(holidays, getStatHolidaysForYear(year));
         }
 
+        // Generate pay periods relative to a known base period to ensure consistency.
+        // Let's establish a base financial year and calculate forwards and backwards.
+        const baseFinancialYear = 2025; 
+        const basePayPeriodIndexInYear = 1;
+        // The global index corresponding to PP1 of 2025 is used as an anchor.
+        const baseGlobalIndex = (baseFinancialYear - 2025) * PAY_PERIODS_PER_YEAR + (basePayPeriodIndexInYear - 1);
+        
         for (let i = -52; i < 52; i++) {
-            const start = addDays(BASE_PAY_PERIOD_START_DATE, i * PAY_PERIOD_LENGTH_DAYS);
+             // Calculate start date based on the global index relative to the base start date
+            const start = addDays(BASE_PAY_PERIOD_START_DATE, (baseGlobalIndex + i) * PAY_PERIOD_LENGTH_DAYS);
             const end = addDays(start, PAY_PERIOD_LENGTH_DAYS - 1);
-            const financialYear = 2025 + Math.floor(i / PAY_PERIODS_PER_YEAR);
-            const payPeriodOfYear = (i % PAY_PERIODS_PER_YEAR + PAY_PERIODS_PER_YEAR) % PAY_PERIODS_PER_YEAR + 1;
+
+            // Determine the financial year and pay period number based on the end date
+            let financialYear = end.getFullYear();
+            let payPeriodOfYear = 0;
             
+            // This logic is tricky. A simpler way is to just derive from index `i`
+            const effectiveIndex = baseGlobalIndex + i;
+            financialYear = 2025 + Math.floor(effectiveIndex / PAY_PERIODS_PER_YEAR);
+            payPeriodOfYear = (effectiveIndex % PAY_PERIODS_PER_YEAR + PAY_PERIODS_PER_YEAR) % PAY_PERIODS_PER_YEAR + 1;
+
             periods.push({
-                number: i + 53, // Adjusted to maintain uniqueness
+                number: effectiveIndex + 100, // Ensure a unique, positive ID
                 payPeriodOfYear: payPeriodOfYear,
                 year: financialYear,
                 start: start,
@@ -2458,6 +2512,9 @@ const App = () => {
         }
         return { payPeriods: periods, allStatHolidays: holidays };
     }, []);
+
+    const allCalculatedData = usePayrollCalculations(profile, shifts, cashedOutHours, payPeriods, allStatHolidays);
+
 
     const handleLogout = async () => {
         await api.logout();
@@ -2563,15 +2620,14 @@ const App = () => {
     const handleSaveCashedOutHours = async (year: number, ppNumber: number, hours: number) => {
         if (!user) return;
 
-        const targetPayPeriod = payPeriods.find(p => p.year === year && p.payPeriodOfYear === ppNumber);
-        if (!targetPayPeriod) return;
-
+        const key = `${year}-${ppNumber}`;
+        
         setIsSavingData(true);
         setSavingMessage('Saving...');
 
         const updatedHours = {
             ...cashedOutHours,
-            [targetPayPeriod.number]: hours,
+            [key]: hours,
         };
         setCashedOutHours(updatedHours);
         
@@ -2585,15 +2641,15 @@ const App = () => {
     };
 
     const renderCurrentPage = () => {
-        if (!profile) return <LoadingSpinner />;
+        if (!profile || !allCalculatedData) return <LoadingSpinner />;
 
         switch (currentPage) {
             case 'dashboard':
-                return <Dashboard profile={profile} shifts={shifts} cashedOutHours={cashedOutHours} onSaveCashedOutHours={handleSaveCashedOutHours} payPeriods={payPeriods} allStatHolidays={allStatHolidays} />;
+                return <Dashboard profile={profile} allCalculatedData={allCalculatedData} onSaveCashedOutHours={handleSaveCashedOutHours} payPeriods={payPeriods} />;
             case 'schedule':
                 return <WorkSchedule profile={profile} shifts={shifts} onSaveShifts={handleSaveShifts} payPeriods={payPeriods} allStatHolidays={allStatHolidays} isSaving={isSavingData}/>;
             case 'ledger':
-                return <Ledger profile={profile} shifts={shifts} cashedOutHours={cashedOutHours} payPeriods={payPeriods} allStatHolidays={allStatHolidays} />;
+                return <Ledger profile={profile} allCalculatedData={allCalculatedData} />;
             case 'profile':
                 return <Profile profile={profile} onSave={handleSaveProfile} isSaving={isSavingData} />;
             default:
@@ -2635,4 +2691,3 @@ const App = () => {
 
 const root = ReactDOM.createRoot(document.getElementById('root') as HTMLElement);
 root.render(<App />);
-
