@@ -1,38 +1,80 @@
 <!DOCTYPE html>
 <html lang="en">
   <head>
-  <title>ACS Salary Calculator</title>
-  <meta name="description" content="ACS Salary Calculator helps Alberta Correctional Services employees track shifts, overtime, and pay.">
-  <meta name="robots" content="index, follow">
-    <meta name="google-site-verification" content="R3Z4KfDyZG6FeIp-cbDDXRAsvQ6odC_cZoS8fYWdVao" />
-    <link rel="manifest" href="/manifest.webmanifest" />
-    <meta name="theme-color" content="#1E3A8A" />
+    <!-- Charset & Viewport -->
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!-- Primary SEO -->
     <title>ACS Salary Calculator</title>
+    <meta name="description" content="ACS Salary Calculator helps Alberta Correctional Services employees track shifts, overtime, premiums, and pay accurately.">
+    <meta name="robots" content="index, follow">
+    <link rel="canonical" href="https://acssalary.netlify.app/">
+
+    <!-- Google Search Console verification -->
+    <meta name="google-site-verification" content="R3Z4KfDyZG6FeIp-cbDDXRAsvQ6odC_cZoS8fYWdVao" />
+
+    <!-- Open Graph (for social media previews) -->
+    <meta property="og:title" content="ACS Salary Calculator">
+    <meta property="og:description" content="Track ACS shifts, overtime, premiums, and salary with accuracy.">
+    <meta property="og:url" content="https://acssalary.netlify.app/">
+    <meta property="og:type" content="website">
+    <meta property="og:image" content="https://acssalary.netlify.app/icon-512x512.png">
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="ACS Salary Calculator">
+    <meta name="twitter:description" content="Track ACS shifts, overtime, premiums, and salary with accuracy.">
+    <meta name="twitter:image" content="https://acssalary.netlify.app/icon-512x512.png">
+
+    <!-- Structured Data (helps Google understand your site) -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      "name": "ACS Salary Calculator",
+      "url": "https://acssalary.netlify.app/",
+      "description": "ACS Salary Calculator helps Alberta Correctional Services employees track shifts, overtime, premiums, and pay accurately.",
+      "publisher": {
+        "@type": "Organization",
+        "name": "ACS Salary",
+        "url": "https://acssalary.netlify.app/"
+      }
+    }
+    </script>
+
+    <!-- PWA Manifest & Theme -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#1E3A8A" />
+
+    <!-- Styles -->
     <link rel="stylesheet" href="/index.css" />
+
+    <!-- Preferred theme init -->
     <script>
       (function () {
         const theme = localStorage.getItem("acs-salary-theme") || "dark";
         document.documentElement.setAttribute("data-theme", theme);
       })();
     </script>
-  <script type="importmap">
-{
-  "imports": {
-    "react": "https://esm.sh/react@^18.2.0",
-    "react-dom/": "https://esm.sh/react-dom@^18.2.0/",
-    "jspdf": "https://esm.sh/jspdf@^2.5.1",
-    "html2canvas": "https://esm.sh/html2canvas@^1.4.1",
-    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@^2.50.5",
-    "react/": "https://esm.sh/react@^18.2.0/",
-    "vite": "https://esm.sh/vite@^5.0.0",
-    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^4.2.0"
-  }
-}
-</script>
-<link rel="stylesheet" href="/index.css">
-</head>
+
+    <!-- Import map -->
+    <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@^18.2.0",
+        "react-dom/": "https://esm.sh/react-dom@^18.2.0/",
+        "jspdf": "https://esm.sh/jspdf@^2.5.1",
+        "html2canvas": "https://esm.sh/html2canvas@^1.4.1",
+        "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@^2.50.5",
+        "react/": "https://esm.sh/react@^18.2.0/",
+        "vite": "https://esm.sh/vite@^5.0.0",
+        "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^4.2.0"
+      }
+    }
+    </script>
+  </head>
+
   <body>
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
