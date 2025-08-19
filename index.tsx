@@ -7,6 +7,15 @@ import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { createClient } from '@supabase/supabase-js';
 import './index.css';
+// PWA SW registration (vite-plugin-pwa)
+import { registerSW } from 'virtual:pwa-register';
+registerSW({ immediate: true });
+
+import Login from './Login';
+import ForgotPassword from './ForgotPassword';
+import AuthCallback from './AuthCallback';
+import RequireAuth from './RequireAuth';
+import { supabase } from './supabaseClient';
 
 fetch('/metadata.json')
   .then((res) => (res.ok ? res.json() : null))
