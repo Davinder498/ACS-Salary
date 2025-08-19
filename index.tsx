@@ -2699,4 +2699,36 @@ const App = () => {
 }
 
 const root = ReactDOM.createRoot(document.getElementById('root') as HTMLElement);
-root.render(<App />);
+
+// Basic path/hash router so we don't add a router dependency
+const path = window.location.pathname;
+const hash = window.location.hash;
+
+(async () => {
+  if (path === '/auth/callback') {
+    root.render(<AuthCallback />);
+    return;
+  }
+  if (hash === '#login') {
+    root.render(<Login />);
+    return;
+  }
+  if (hash === '#forgot') {
+    root.render(<ForgotPassword />);
+    return;
+  }
+
+  // If authenticated, show your existing app; otherwise show login
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) {
+    root.render(<Login />);
+    return;
+  }
+
+  // 👇 This keeps your original <App /> exactly as-is, just protected.
+  root.render(
+    <RequireAuth>
+      <App />
+    </RequireAuth>
+  );
+})();
