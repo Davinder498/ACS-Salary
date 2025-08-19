@@ -26,27 +26,48 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
-      <div className="bg-white w-full max-w-sm p-6 rounded-xl shadow-md">
-        <h1 className="text-2xl font-bold text-center text-blue-900 mb-6">ACS Salary Calculator</h1>
+    <div className="auth-page">
+      <div className="auth-card">
+        <h1 className="auth-title">ACS Salary Calculator</h1>
+        <p className="auth-sub">
+          {mode === 'login'
+            ? 'Log in to view your schedule and pay history.'
+            : 'Create your account to start tracking pay and shifts.'}
+        </p>
 
-        <form onSubmit={mode === 'login' ? onLogin : onSignup} className="space-y-3">
-          <input type="email" placeholder="Email"
-            className="w-full px-4 py-2 border rounded-md focus:ring focus:ring-blue-300"
-            value={email} onChange={e=>setEmail(e.target.value)} required/>
-          <input type="password" placeholder="Password"
-            className="w-full px-4 py-2 border rounded-md focus:ring focus:ring-blue-300"
-            value={password} onChange={e=>setPassword(e.target.value)} required/>
-          <button type="submit" className="w-full bg-blue-900 text-white py-2 rounded-md hover:bg-blue-800">
+        <form onSubmit={mode === 'login' ? onLogin : onSignup} className="auth-form">
+          <input
+            className="input"
+            type="email"
+            placeholder="Email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+            autoComplete="email"
+          />
+          <input
+            className="input"
+            type="password"
+            placeholder="Password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+          />
+
+          <button type="submit" className="btn btn-primary">
             {mode === 'login' ? 'Log In' : 'Create Account'}
           </button>
         </form>
 
-        <div className="flex items-center justify-between text-sm mt-4">
-          <button className="text-blue-700 hover:underline" onClick={()=> (window.location.hash = '#forgot')}>
+        <div className="auth-actions">
+          <button className="btn btn-link" onClick={() => (window.location.hash = '#forgot')}>
             Forgot password?
           </button>
-          <button className="text-gray-600 hover:underline" onClick={()=> setMode(mode==='login'?'signup':'login')}>
+          <button
+            className="btn btn-link"
+            onClick={() => setMode(mode === 'login' ? 'signup' : 'login')}
+          >
             {mode === 'login' ? 'Need an account?' : 'Have an account?'}
           </button>
         </div>
