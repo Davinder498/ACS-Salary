@@ -1517,20 +1517,4 @@ input:checked + .slider:before {
         border-left: 3px solid var(--accent-primary);
         padding-left: calc(1rem - 3px);
     }
-  :root {
-  --bg: #0e0f12;           /* page background (dark) */
-  --text: #e7e9ee;         /* body text */
-  --muted: #a7adbb;        /* secondary text */
-  --card: #171a21;         /* panel/card bg */
-  --border: #2a2f3a;       /* subtle borders */
-  --primary: #1e3a8a;      /* brand blue */
-  --primary-600: #294aa7;  /* hover blue */
-  --focus: #80b2ff;        /* focus ring */
-  --danger: #e5484d;
-}
-
-html, body {
-  background: var(--bg);
-  color: var(--text);
-}
 }
