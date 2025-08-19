@@ -5,24 +5,51 @@ export default function Login() {
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
 
   async function onLogin(e: React.FormEvent) {
     e.preventDefault();
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) return alert(error.message);
-    window.location.href = '/';
+    if (busy) return;
+    setBusy(true);
+    try {
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) {
+        console.error('signIn error:', error);
+        alert(error.message);
+        return;
+      }
+      window.location.href = '/';
+    } catch (err: any) {
+      console.error('signIn threw:', err);
+      alert(err?.message || 'Unexpected error');
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function onSignup(e: React.FormEvent) {
     e.preventDefault();
+    if (busy) return;
     if (password.length < 8) return alert('Use at least 8 characters.');
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: { emailRedirectTo: 'https://acssalary.netlify.app/auth/callback' },
-    });
-    if (error) return alert(error.message);
-    alert('Check your email to confirm your account.');
+    setBusy(true);
+    try {
+      const { error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: { emailRedirectTo: 'https://acssalary.netlify.app/auth/callback' },
+      });
+      if (error) {
+        console.error('signUp error:', error);
+        alert(error.message);
+        return;
+      }
+      alert('Check your email to confirm your account.');
+    } catch (err: any) {
+      console.error('signUp threw:', err);
+      alert(err?.message || 'Unexpected error');
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -35,7 +62,7 @@ export default function Login() {
             : 'Create your account to start tracking pay and shifts.'}
         </p>
 
-        <form onSubmit={mode === 'login' ? onLogin : onSignup} className="auth-form">
+        <form onSubmit={mode === 'login' ? onLogin : onSignup} className="auth-form" noValidate>
           <input
             className="input"
             type="email"
@@ -55,16 +82,21 @@ export default function Login() {
             autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
           />
 
-          <button type="submit" className="btn btn-primary">
-            {mode === 'login' ? 'Log In' : 'Create Account'}
+          <button type="submit" className="btn btn-primary" disabled={busy}>
+            {busy ? 'Please wait…' : mode === 'login' ? 'Log In' : 'Create Account'}
           </button>
         </form>
 
         <div className="auth-actions">
-          <button className="btn btn-link" onClick={() => (window.location.hash = '#forgot')}>
+          <button
+            type="button"
+            className="btn btn-link"
+            onClick={() => (window.location.hash = '#forgot')}
+          >
             Forgot password?
           </button>
           <button
+            type="button"
             className="btn btn-link"
             onClick={() => setMode(mode === 'login' ? 'signup' : 'login')}
           >
