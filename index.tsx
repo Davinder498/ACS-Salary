@@ -57,6 +57,10 @@ const getSupabaseEnv = (key: string): string | undefined => {
 const SUPABASE_URL = getSupabaseEnv('SUPABASE_URL') || SUPABASE_URL_PLACEHOLDER;
 const SUPABASE_ANON_KEY = getSupabaseEnv('SUPABASE_ANON_KEY') || SUPABASE_ANON_KEY_PLACEHOLDER;
 
+// The SITE_URL is used for auth redirects. It defaults to the current page's origin,
+// but can be overridden by an environment variable for specific deployment scenarios.
+const SITE_URL = getSupabaseEnv('SITE_URL') || window.location.origin;
+
 // Check if the keys are still the default placeholders.
 const isSupabaseConfigured =
     SUPABASE_URL &&
@@ -194,7 +198,7 @@ const api = {
             email,
             password,
             options: {
-                emailRedirectTo: `${window.location.origin}?verified=true`
+                emailRedirectTo: `${SITE_URL}?verified=true`
             }
         });
         if (error) throw error;
@@ -207,7 +211,7 @@ const api = {
     sendPasswordResetEmail: async (email: string) => {
         if (!isSupabaseConfigured) throw new Error("Database not configured.");
         const { error } = await supabase.auth.resetPasswordForEmail(email, {
-            redirectTo: window.location.origin,
+            redirectTo: SITE_URL,
         });
         if (error) throw error;
     },
