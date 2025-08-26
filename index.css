@@ -1,3 +1,6 @@
+
+
+
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 :root {
@@ -352,6 +355,10 @@ input:focus, select:focus {
   border-radius: 6px;
   text-align: center;
   margin-bottom: 1rem;
+}
+.auth-error.small, .auth-success.small {
+    padding: 0.5rem;
+    font-size: 0.9em;
 }
 .auth-toggle {
   text-align: center;
@@ -846,11 +853,6 @@ input:checked + .slider:before {
     display: flex;
     gap: 1rem;
     align-items: flex-end;
-}
-.work-cycle-pattern-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 1rem 1.5rem;
 }
 .deductions-grid {
     display: grid;
@@ -1430,9 +1432,6 @@ input:checked + .slider:before {
     }
     .work-cycle-inputs span {
         display: none;
-    }
-    .work-cycle-pattern-grid {
-        grid-template-columns: repeat(2, 1fr);
     }
     .deductions-grid {
         grid-template-columns: 1fr;
