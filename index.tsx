@@ -194,7 +194,7 @@ const api = {
             email,
             password,
             options: {
-                emailRedirectTo: `${window.location.origin}#verified`
+                emailRedirectTo: `${window.location.origin}?verified=true`
             }
         });
         if (error) throw error;
@@ -210,6 +210,14 @@ const api = {
             redirectTo: window.location.origin,
         });
         if (error) throw error;
+    },
+    updatePassword: async (newPassword: string) => {
+        if (!isSupabaseConfigured) throw new Error("Database not configured.");
+        const { data, error } = await supabase.auth.updateUser({
+            password: newPassword
+        });
+        if (error) throw error;
+        return data;
     },
     logout: async () => {
         if (!isSupabaseConfigured) return;
@@ -996,6 +1004,9 @@ const AuthScreen = () => {
         if (authAction === 'verified') {
             setSuccess('Email verified successfully! You can now log in.');
             sessionStorage.removeItem('authAction');
+        } else if (authAction === 'password_reset') {
+            setSuccess('Password reset successfully. You can now log in with your new password.');
+            sessionStorage.removeItem('authAction');
         }
     }, []);
 
@@ -1219,6 +1230,13 @@ const Profile = React.memo(({ profile, onSave, isSaving }: ProfileProps) => {
     const [pattern, setPattern] = useState<Array<'D' | 'A' | 'N' | 'O'>>(profile.workCycleReference?.pattern || defaultPattern);
     const [deductions, setDeductions] = useState<DeductionSettings>(profile.deductions);
 
+    const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+    const [newPassword, setNewPassword] = useState('');
+    const [confirmPassword, setConfirmPassword] = useState('');
+    const [passwordError, setPasswordError] = useState('');
+    const [passwordSuccess, setPasswordSuccess] = useState('');
+    const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
+
     useEffect(() => {
         setBaseRate(profile.baseRate);
         if (profile.workCycleReference) {
@@ -1228,12 +1246,38 @@ const Profile = React.memo(({ profile, onSave, isSaving }: ProfileProps) => {
         }
         setDeductions(profile.deductions);
     }, [profile]);
+    
+    const handlePasswordChange = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setPasswordError('');
+        setPasswordSuccess('');
 
-    const handlePatternChange = (index: number, value: 'D' | 'A' | 'N' | 'O') => {
-        const newPattern = [...pattern];
-        newPattern[index] = value;
-        setPattern(newPattern);
+        if (newPassword.length < 6) {
+            setPasswordError('Password must be at least 6 characters long.');
+            return;
+        }
+        if (newPassword !== confirmPassword) {
+            setPasswordError('Passwords do not match.');
+            return;
+        }
+
+        setIsUpdatingPassword(true);
+        try {
+            await api.updatePassword(newPassword);
+            setPasswordSuccess('Password updated successfully!');
+            setNewPassword('');
+            setConfirmPassword('');
+            setTimeout(() => {
+                setIsPasswordModalOpen(false);
+                setPasswordSuccess('');
+            }, 2000);
+        } catch (err) {
+            setPasswordError((err as Error).message);
+        } finally {
+            setIsUpdatingPassword(false);
+        }
     };
+
 
     const handleDeductionChange = (field: keyof DeductionSettings, value: any) => {
         setDeductions(prev => ({ ...prev, [field]: value }));
@@ -1329,28 +1373,6 @@ const Profile = React.memo(({ profile, onSave, isSaving }: ProfileProps) => {
                     </div>
                 </div>
               </div>
-
-              <div className="card">
-                <h3 className="card-header-title">Work Cycle Pattern</h3>
-                <p className="card-description">Define your personal 9-day work rotation pattern. This will be used as the default schedule.</p>
-                <div className="work-cycle-pattern-grid">
-                    {pattern.map((shiftType, index) => (
-                        <div key={index} className="form-group">
-                            <label htmlFor={`cycle-day-${index + 1}`}>Day {index + 1}</label>
-                            <select 
-                                id={`cycle-day-${index + 1}`} 
-                                value={shiftType} 
-                                onChange={e => handlePatternChange(index, e.target.value as 'D' | 'A' | 'N' | 'O')}
-                            >
-                                <option value="D">Day Shift</option>
-                                <option value="A">Afternoon Shift</option>
-                                <option value="N">Night Shift</option>
-                                <option value="O">Off Day</option>
-                            </select>
-                        </div>
-                    ))}
-                </div>
-              </div>
               
               <div className="card">
                  <h3 className="card-header-title">Deductions & Tax Information</h3>
@@ -1416,11 +1438,63 @@ const Profile = React.memo(({ profile, onSave, isSaving }: ProfileProps) => {
                  </div>
                  <button type="button" className="secondary-btn" onClick={addOtherDeduction} style={{alignSelf: 'flex-start'}}>Add Deduction</button>
               </div>
+               <div className="card">
+                    <h3 className="card-header-title">Security</h3>
+                    <p className="card-description">Manage your account security settings.</p>
+                    <button
+                        type="button"
+                        className="secondary-btn"
+                        style={{ alignSelf: 'flex-start' }}
+                        onClick={() => {
+                            setIsPasswordModalOpen(true);
+                            setPasswordError('');
+                            setPasswordSuccess('');
+                            setNewPassword('');
+                            setConfirmPassword('');
+                        }}
+                    >
+                        Change Password
+                    </button>
+                </div>
 
               <button type="submit" style={{marginTop: '1rem'}} disabled={isSaving}>
                 {isSaving ? 'Saving...' : 'Save Profile Changes'}
               </button>
             </form>
+            <Modal isOpen={isPasswordModalOpen} onClose={() => setIsPasswordModalOpen(false)} title="Change Password">
+                <form onSubmit={handlePasswordChange}>
+                    {passwordError && <p className="auth-error small">{passwordError}</p>}
+                    {passwordSuccess && <p className="auth-success small">{passwordSuccess}</p>}
+                    <div className="form-group">
+                        <label htmlFor="newPassword">New Password</label>
+                        <input
+                            type="password"
+                            id="newPassword"
+                            value={newPassword}
+                            onChange={e => setNewPassword(e.target.value)}
+                            required
+                            minLength={6}
+                        />
+                         <p className="checkbox-note" style={{paddingLeft: 0, margin: '0.25rem 0 0 0'}}>Password must be at least 6 characters long.</p>
+                    </div>
+                    <div className="form-group">
+                        <label htmlFor="confirmPassword">Confirm New Password</label>
+                        <input
+                            type="password"
+                            id="confirmPassword"
+                            value={confirmPassword}
+                            onChange={e => setConfirmPassword(e.target.value)}
+                            required
+                        />
+                    </div>
+                    <div className="editor-footer" style={{marginTop: 0}}>
+                        <button type="button" onClick={() => setIsPasswordModalOpen(false)} className="cancel-btn">Cancel</button>
+                        <button type="submit" className="save-btn" disabled={isUpdatingPassword}>
+                            {isUpdatingPassword ? 'Updating...' : 'Update Password'}
+                        </button>
+                    </div>
+                </form>
+            </Modal>
         </div>
     );
 });
@@ -2464,12 +2538,35 @@ const App = () => {
     
     const userRef = useRef(user);
     userRef.current = user;
+
+    // This effect runs once on initial mount to handle auth redirects from Supabase.
+    useEffect(() => {
+        let authActionSet = false;
+        const hash = window.location.hash;
+        const params = new URLSearchParams(window.location.search);
+
+        // Supabase uses `type=recovery` in the hash for password resets
+        if (hash.includes('type=recovery')) {
+            sessionStorage.setItem('authAction', 'password_reset');
+            authActionSet = true;
+        } 
+        // We use a query parameter for email verification
+        else if (params.get('verified') === 'true') {
+            sessionStorage.setItem('authAction', 'verified');
+            authActionSet = true;
+        }
+
+        // If we identified an auth action, clean the URL to prevent this from re-triggering on refresh.
+        if (authActionSet) {
+            window.history.replaceState({}, document.title, window.location.pathname);
+        }
+    }, []); // Empty dependency array ensures this runs only once.
     
     useEffect(() => {
         document.documentElement.setAttribute('data-theme', theme);
         localStorage.setItem('acs-salary-theme', theme);
     }, [theme]);
-    
+
     const toggleTheme = () => setTheme(prev => prev === "dark" ? "light" : "dark");
 
     const { payPeriods, allStatHolidays } = useMemo(() => {
@@ -2482,28 +2579,19 @@ const App = () => {
         }
 
         // Generate pay periods relative to a known base period to ensure consistency.
-        // Let's establish a base financial year and calculate forwards and backwards.
         const baseFinancialYear = 2025; 
         const basePayPeriodIndexInYear = 1;
-        // The global index corresponding to PP1 of 2025 is used as an anchor.
         const baseGlobalIndex = (baseFinancialYear - 2025) * PAY_PERIODS_PER_YEAR + (basePayPeriodIndexInYear - 1);
         
         for (let i = -52; i < 52; i++) {
-             // Calculate start date based on the global index relative to the base start date
             const start = addDays(BASE_PAY_PERIOD_START_DATE, (baseGlobalIndex + i) * PAY_PERIOD_LENGTH_DAYS);
             const end = addDays(start, PAY_PERIOD_LENGTH_DAYS - 1);
 
-            // Determine the financial year and pay period number based on the end date
-            let financialYear = end.getFullYear();
-            let payPeriodOfYear = 0;
-            
-            // This logic is tricky. A simpler way is to just derive from index `i`
-            const effectiveIndex = baseGlobalIndex + i;
-            financialYear = 2025 + Math.floor(effectiveIndex / PAY_PERIODS_PER_YEAR);
-            payPeriodOfYear = (effectiveIndex % PAY_PERIODS_PER_YEAR + PAY_PERIODS_PER_YEAR) % PAY_PERIODS_PER_YEAR + 1;
+            let financialYear = 2025 + Math.floor((baseGlobalIndex + i) / PAY_PERIODS_PER_YEAR);
+            let payPeriodOfYear = ((baseGlobalIndex + i) % PAY_PERIODS_PER_YEAR + PAY_PERIODS_PER_YEAR) % PAY_PERIODS_PER_YEAR + 1;
 
             periods.push({
-                number: effectiveIndex + 100, // Ensure a unique, positive ID
+                number: baseGlobalIndex + i + 100, // Ensure a unique, positive ID
                 payPeriodOfYear: payPeriodOfYear,
                 year: financialYear,
                 start: start,
@@ -2515,12 +2603,12 @@ const App = () => {
 
     const allCalculatedData = usePayrollCalculations(profile, shifts, cashedOutHours, payPeriods, allStatHolidays);
 
-
     const handleLogout = async () => {
         await api.logout();
         setPage('dashboard');
     };
 
+    // This effect manages the Supabase authentication state listener.
     useEffect(() => {
         if (!isSupabaseConfigured) {
             setLoading(false);
@@ -2528,14 +2616,18 @@ const App = () => {
         }
         setLoading(true);
 
-        const { data: authListener } = supabase.auth.onAuthStateChange(async (_event, session) => {
-            if (_event === 'SIGNED_IN' && window.location.hash.includes('#verified')) {
-                window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
+        const { data: authListener } = supabase.auth.onAuthStateChange(async (_event: string, session: Session | null) => {
+            const authAction = sessionStorage.getItem('authAction');
+
+            // INTERCEPT: If a sign-in event happens right after a password reset or email verification,
+            // we must log the user out immediately to return them to the AuthScreen.
+            if (_event === 'SIGNED_IN' && session && (authAction === 'password_reset' || authAction === 'verified')) {
                 await api.logout();
-                sessionStorage.setItem('authAction', 'verified');
+                // The subsequent SIGNED_OUT event will reset the app state correctly.
                 return;
             }
-
+            
+            // This is the normal flow for all other logins and logouts.
             setSession(session);
             if (!session) {
                 setUser(null);
@@ -2545,12 +2637,14 @@ const App = () => {
                 setLoading(false);
                 return;
             }
-
+            
+            // Avoid re-fetching data if the user is already loaded.
             if (userRef.current?.uid === session.user.id) {
                 setLoading(false);
                 return;
             }
 
+            // Fetch user data for a new valid session.
             try {
                 const userData = await api.getUserData(session.user.id);
                 setUser({ uid: session.user.id, ...userData });
@@ -2559,13 +2653,11 @@ const App = () => {
                 setCashedOutHours(userData.cashedOutHours || {});
             } catch (error: any) {
                 const isMissingTableError = error.code === '42P01' || (error.message && error.message.includes('relation "public.profiles" does not exist'));
-
                 if (isMissingTableError) {
                     setDbError('missing_table');
                 } else {
                     console.error("Error fetching profile:", error);
-                    console.error("Logging out due to data fetch failure:", error);
-                    handleLogout();
+                    handleLogout(); // Log out on data fetch failure.
                 }
             } finally {
                 setLoading(false);
@@ -2575,8 +2667,7 @@ const App = () => {
         return () => {
             authListener.subscription.unsubscribe();
         };
-    }, []);
-
+    }, []); // Empty dependency array ensures this also runs only once.
 
     const handleSaveProfile = async (newProfile: ProfileData) => {
         if (!user) return;
