@@ -788,7 +788,7 @@ const calculateEarningsForPeriod = (payPeriod: PayPeriod | null, allShifts: Shif
                     }
                     
                     const dayOfWeek = date.getDay();
-                    const isWeekendShift = (dayOfWeek === 6) || (dayOfWeek === 0) || (dayOfWeek === 5 && shift.type === 'A');
+                    const isWeekendShift = (dayOfWeek === 6) || (dayOfWeek === 0) || (dayOfWeek === 5 && shift.type === 'A') || (dayOfWeek === 1 && shift.type === 'N');
                     if (isWeekendShift) {
                        deferred.weekend.hours += 7.75;
                        deferred.weekend.pay += 7.75 * 3.25;
@@ -1375,6 +1375,32 @@ const Profile = React.memo(({ profile, onSave, isSaving }: ProfileProps) => {
                             ))}
                         </select>
                     </div>
+                </div>
+              </div>
+              
+              <div className="card">
+                <h3 className="card-header-title">Work Cycle Pattern</h3>
+                <p className="card-description">Define the default shift for each day of your 9-day work cycle. This will be used to project your schedule.</p>
+                <div className="work-cycle-pattern-grid">
+                    {pattern.map((shiftType, index) => (
+                        <div key={index} className="form-group work-cycle-pattern-item">
+                            <label htmlFor={`pattern-day-${index + 1}`}>Day {index + 1}</label>
+                            <select
+                                id={`pattern-day-${index + 1}`}
+                                value={shiftType}
+                                onChange={(e) => {
+                                    const newPattern = [...pattern] as Array<'D' | 'A' | 'N' | 'O'>;
+                                    newPattern[index] = e.target.value as 'D' | 'A' | 'N' | 'O';
+                                    setPattern(newPattern);
+                                }}
+                            >
+                                <option value="D">Day Shift</option>
+                                <option value="A">Afternoon Shift</option>
+                                <option value="N">Night Shift</option>
+                                <option value="O">Off</option>
+                            </select>
+                        </div>
+                    ))}
                 </div>
               </div>
               
