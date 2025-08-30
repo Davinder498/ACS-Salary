@@ -854,6 +854,14 @@ input:checked + .slider:before {
     gap: 1rem;
     align-items: flex-end;
 }
+.work-cycle-pattern-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.5rem;
+}
+.work-cycle-pattern-item {
+    margin-bottom: 0;
+}
 .deductions-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -1432,6 +1440,10 @@ input:checked + .slider:before {
     }
     .work-cycle-inputs span {
         display: none;
+    }
+    .work-cycle-pattern-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 1rem;
     }
     .deductions-grid {
         grid-template-columns: 1fr;
