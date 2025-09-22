@@ -721,6 +721,7 @@ const calculateEarningsForPeriod = (payPeriod: PayPeriod | null, allShifts: Shif
         shiftsToProcess.forEach(shift => {
             if (shift.type === 'O') return;
 
+            // --- Overtime Pay Calculation ---
             if (shift.category !== 'Regular') {
                 let otPay1_5x = 0, otHours1_5x = 0;
                 let otPay2x = 0, otHours2x = 0;
@@ -771,31 +772,34 @@ const calculateEarningsForPeriod = (payPeriod: PayPeriod | null, allShifts: Shif
                     deferred.ot2x.pay += otPay2x;
                 }
             } 
+            // --- Regular Shift Pay Logic (Stat Holiday Bonus) ---
             else {
                 if (isStatHoliday) {
                     deferred.statHolidayBonus.hours += 7.75;
                     deferred.statHolidayBonus.pay += 7.75 * 0.5 * baseRate;
                 }
-
-                if (!shift.isBookedOff) {
-                    if (shift.type === 'A') {
-                        deferred.afternoon.hours += 7.75;
-                        deferred.afternoon.pay += 7.75 * 2.75;
-                    }
-                    if (shift.type === 'N') {
-                        deferred.night.hours += 7.75;
-                        deferred.night.pay += 7.75 * 5.00;
-                    }
-                    
-                    const dayOfWeek = date.getDay();
-                    const isWeekendShift = (dayOfWeek === 6) || (dayOfWeek === 0) || (dayOfWeek === 5 && shift.type === 'A') || (dayOfWeek === 1 && shift.type === 'N');
-                    if (isWeekendShift) {
-                       deferred.weekend.hours += 7.75;
-                       deferred.weekend.pay += 7.75 * 3.25;
-                    }
-                }
             }
             
+            // --- Shift Premiums (Applicable to ALL shifts: Regular and OT) ---
+            if (!shift.isBookedOff) {
+                if (shift.type === 'A') {
+                    deferred.afternoon.hours += 7.75;
+                    deferred.afternoon.pay += 7.75 * 2.75;
+                }
+                if (shift.type === 'N') {
+                    deferred.night.hours += 7.75;
+                    deferred.night.pay += 7.75 * 5.00;
+                }
+                
+                const dayOfWeek = date.getDay();
+                const isWeekendShift = (dayOfWeek === 6) || (dayOfWeek === 0) || (dayOfWeek === 5 && shift.type === 'A') || (dayOfWeek === 1 && shift.type === 'N');
+                if (isWeekendShift) {
+                   deferred.weekend.hours += 7.75;
+                   deferred.weekend.pay += 7.75 * 3.25;
+                }
+            }
+
+            // --- Escort Pay (Applicable to ALL shifts) ---
             if (shift.hasEscort) {
                 deferred.stm.hours += 1;
                 deferred.stm.pay += 1 * baseRate;
@@ -1123,7 +1127,14 @@ const AuthScreen = () => {
         );
     };
 
-    return <div className="auth-container"><div className="auth-box">{renderContent()}</div></div>;
+    return (
+        <div className="auth-container">
+            <p className="auth-disclaimer">
+                This app is an independent initiative created to assist Correctional Peace Officers of Alberta with salary calculation. It is not sponsored or endorsed by the Government of Alberta or any other organization. The app is in the testing phase, and your use and feedback are appreciated.
+            </p>
+            <div className="auth-box">{renderContent()}</div>
+        </div>
+    );
 };
 
 interface MobileHeaderProps { currentPage: string; onMenuClick: () => void; }
