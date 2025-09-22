@@ -1,6 +1,4 @@
 
-
-
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 :root {
@@ -381,6 +379,16 @@ input:focus, select:focus {
 .auth-toggle button:hover {
   text-decoration: underline;
   transform: none;
+}
+
+.auth-disclaimer {
+    max-width: 550px;
+    margin: 0 1rem 1.5rem;
+    text-align: center;
+    font-size: 0.95rem; /* Increased font size */
+    font-weight: 500; /* Increased font weight */
+    color: var(--text-secondary);
+    line-height: 1.6;
 }
 
 /* --- Configuration Screen --- */
