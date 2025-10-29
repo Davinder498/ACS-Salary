@@ -721,7 +721,6 @@ const calculateEarningsForPeriod = (payPeriod: PayPeriod | null, allShifts: Shif
         shiftsToProcess.forEach(shift => {
             if (shift.type === 'O') return;
 
-            // --- Overtime Pay Calculation ---
             if (shift.category !== 'Regular') {
                 let otPay1_5x = 0, otHours1_5x = 0;
                 let otPay2x = 0, otHours2x = 0;
@@ -772,34 +771,31 @@ const calculateEarningsForPeriod = (payPeriod: PayPeriod | null, allShifts: Shif
                     deferred.ot2x.pay += otPay2x;
                 }
             } 
-            // --- Regular Shift Pay Logic (Stat Holiday Bonus) ---
             else {
                 if (isStatHoliday) {
                     deferred.statHolidayBonus.hours += 7.75;
                     deferred.statHolidayBonus.pay += 7.75 * 0.5 * baseRate;
                 }
+
+                if (!shift.isBookedOff) {
+                    if (shift.type === 'A') {
+                        deferred.afternoon.hours += 7.75;
+                        deferred.afternoon.pay += 7.75 * 2.75;
+                    }
+                    if (shift.type === 'N') {
+                        deferred.night.hours += 7.75;
+                        deferred.night.pay += 7.75 * 5.00;
+                    }
+                    
+                    const dayOfWeek = date.getDay();
+                    const isWeekendShift = (dayOfWeek === 6) || (dayOfWeek === 0) || (dayOfWeek === 5 && shift.type === 'A') || (dayOfWeek === 1 && shift.type === 'N');
+                    if (isWeekendShift) {
+                       deferred.weekend.hours += 7.75;
+                       deferred.weekend.pay += 7.75 * 3.25;
+                    }
+                }
             }
             
-            // --- Shift Premiums (Applicable to ALL shifts: Regular and OT) ---
-            if (!shift.isBookedOff) {
-                if (shift.type === 'A') {
-                    deferred.afternoon.hours += 7.75;
-                    deferred.afternoon.pay += 7.75 * 2.75;
-                }
-                if (shift.type === 'N') {
-                    deferred.night.hours += 7.75;
-                    deferred.night.pay += 7.75 * 5.00;
-                }
-                
-                const dayOfWeek = date.getDay();
-                const isWeekendShift = (dayOfWeek === 6) || (dayOfWeek === 0) || (dayOfWeek === 5 && shift.type === 'A') || (dayOfWeek === 1 && shift.type === 'N');
-                if (isWeekendShift) {
-                   deferred.weekend.hours += 7.75;
-                   deferred.weekend.pay += 7.75 * 3.25;
-                }
-            }
-
-            // --- Escort Pay (Applicable to ALL shifts) ---
             if (shift.hasEscort) {
                 deferred.stm.hours += 1;
                 deferred.stm.pay += 1 * baseRate;
@@ -903,7 +899,7 @@ const ConfigurationScreen = () => {
 
 
 interface ModalProps {
-    children: React.ReactNode;
+    children?: React.ReactNode;
     isOpen: boolean;
     onClose: () => void;
     title: string;
@@ -1973,7 +1969,8 @@ const PayPeriodDetailView = ({ payPeriod, previousPayPeriod, profile, currentDat
     if (!currentData.earnings || !profile) return null;
 
     const { earnings: currentEarnings, grossPay, netPay, deductions, startBalance, endBalance, cashedOut } = currentData;
-    const deferredPayFromPrevious = previousEarnings ? Object.values(previousEarnings.deferred).reduce((sum, item) => sum + item.pay, 0) : 0;
+    {/* Fix: Add type annotation for item in reduce to resolve 'unknown' type error. */}
+    const deferredPayFromPrevious = previousEarnings ? Object.values(previousEarnings.deferred).reduce((sum, item: PayDetails) => sum + item.pay, 0) : 0;
     
     const handleDownloadPdf = async () => {
         if (!printableRef.current) return;
@@ -2024,7 +2021,8 @@ const PayPeriodDetailView = ({ payPeriod, previousPayPeriod, profile, currentDat
 
                     {deferredPayFromPrevious > 0 && previousEarnings && (
                         <div className="deferred-breakdown-list earnings">
-                            {Object.entries(previousEarnings.deferred).map(([key, value]) => value.pay > 0 && (
+                            {/* Fix: Add type annotation for [key, value] to resolve 'unknown' type error. */}
+                            {Object.entries(previousEarnings.deferred).map(([key, value]: [string, PayDetails]) => value.pay > 0 && (
                                 <div className="card-item" key={key}>
                                     <span>
                                         {key.replace(/_/g, ' ').replace('ot1 5x', 'OT 1.5x').replace('ot2x', 'OT 2.0x').replace(/\b\w/g, l => l.toUpperCase())}
@@ -2035,6 +2033,17 @@ const PayPeriodDetailView = ({ payPeriod, previousPayPeriod, profile, currentDat
                             ))}
                         </div>
                     )}
+                    
+                    {cashedOut > 0 && (
+                        <div className="card-item">
+                            <span>
+                                Cashed Out Overtime
+                                <span className="item-details">{cashedOut.toFixed(2)} hrs</span>
+                            </span>
+                            <span>${(cashedOut * profile.baseRate).toFixed(2)}</span>
+                        </div>
+                    )}
+
                     {showNetPay && (
                         <>
                             <h4 className="card-subtitle" style={{marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)'}}>Deductions on This Paycheck</h4>
@@ -2058,11 +2067,13 @@ const PayPeriodDetailView = ({ payPeriod, previousPayPeriod, profile, currentDat
                     <h3>Current Period Activity</h3>
                     <div className="card-item">
                         <span>Deferred to Next Pay Period</span>
-                        <span style={{fontWeight: 'bold'}}>${Object.values(currentEarnings.deferred).reduce((s,i)=>s+i.pay,0).toFixed(2)}</span>
+                        {/* Fix: Add type annotation for item in reduce to resolve 'unknown' type error. */}
+                        <span style={{fontWeight: 'bold'}}>${Object.values(currentEarnings.deferred).reduce((s,i: PayDetails)=>s+i.pay,0).toFixed(2)}</span>
                     </div>
-                     {Object.values(currentEarnings.deferred).some(v => v.pay > 0) && (
+                     {Object.values(currentEarnings.deferred).some((v: PayDetails) => v.pay > 0) && (
                         <div className="deferred-breakdown-list">
-                            {Object.entries(currentEarnings.deferred).map(([key, value]) => value.pay > 0 && (
+                            {/* Fix: Add type annotation for [key, value] to resolve 'unknown' type error. */}
+                            {Object.entries(currentEarnings.deferred).map(([key, value]: [string, PayDetails]) => value.pay > 0 && (
                                <div className="card-item" key={key}>
                                    <span>
                                        {key.replace(/_/g, ' ').replace('ot1 5x', 'OT 1.5x').replace('ot2x', 'OT 2.0x').replace(/\b\w/g, l => l.toUpperCase())}
@@ -2254,11 +2265,11 @@ const AnnualProjectionView = ({ payPeriods, profile, allCalculatedData }: Annual
             projection.breakdown.baseSalary.pay += item.earnings.regularPay.pay;
             projection.breakdown.baseSalary.hours += item.earnings.regularPay.hours;
 
-            for (const key in item.earnings.deferred) {
-                const typedKey = key as keyof DeferredPay;
-                projection.breakdown[typedKey].pay += item.earnings.deferred[typedKey].pay;
-                projection.breakdown[typedKey].hours += item.earnings.deferred[typedKey].hours;
-            }
+            // Fix: Replace for...in loop with Object.keys().forEach for type safety.
+            (Object.keys(item.earnings.deferred) as (keyof DeferredPay)[]).forEach(key => {
+                projection.breakdown[key].pay += item.earnings.deferred[key].pay;
+                projection.breakdown[key].hours += item.earnings.deferred[key].hours;
+            });
         });
 
         return projection;
@@ -2269,13 +2280,15 @@ const AnnualProjectionView = ({ payPeriods, profile, allCalculatedData }: Annual
     const netBreakdown = { ...annualData.breakdown };
     if (showNet) {
         const grossToNetRatio = annualData.totalGrossPay > 0 ? annualData.totalNetPay / annualData.totalGrossPay : 0;
-        for (const key in netBreakdown) {
-            (netBreakdown as any)[key].pay *= grossToNetRatio;
-        }
+        // Fix: Replace for...in loop with Object.keys().forEach for type safety.
+        (Object.keys(netBreakdown) as (keyof typeof netBreakdown)[]).forEach(key => {
+            netBreakdown[key].pay *= grossToNetRatio;
+        });
     }
     
+    // Fix: Add type annotation for [name, data] to resolve 'unknown' type error.
     const chartData = Object.entries(showNet ? netBreakdown : annualData.breakdown)
-      .map(([name, data]) => ({ name: name.replace(/_/g, ' ').replace('baseSalary', 'Base Salary').replace('ot1 5x', 'OT 1.5x').replace('ot2x', 'OT 2.0x').replace('stm', 'STM').replace('statHolidayBonus', 'Stat Bonus').replace(/\b\w/g, l => l.toUpperCase()), value: data.pay }))
+      .map(([name, data]: [string, PayDetails]) => ({ name: name.replace(/_/g, ' ').replace('baseSalary', 'Base Salary').replace('ot1 5x', 'OT 1.5x').replace('ot2x', 'OT 2.0x').replace('stm', 'STM').replace('statHolidayBonus', 'Stat Bonus').replace(/\b\w/g, l => l.toUpperCase()), value: data.pay }))
       .filter(d => d.value > 0)
       .sort((a,b) => b.value - a.value);
 
@@ -2388,7 +2401,8 @@ const PrintablePaystub = React.forwardRef<HTMLDivElement, PrintablePaystubProps>
 
     const deferredFromPrevious = previousEarnings?.deferred;
     const { deferred: deferredToNext, equivalentBankedOtHours } = currentEarnings;
-    const totalDeferredToNext = Object.values(deferredToNext).reduce((sum, item) => sum + item.pay, 0);
+    // Fix: Add type annotation for item in reduce to resolve 'unknown' type error.
+    const totalDeferredToNext = Object.values(deferredToNext).reduce((sum, item: PayDetails) => sum + item.pay, 0);
 
     return (
         <div ref={ref} className="printable-area">
@@ -2406,7 +2420,7 @@ const PrintablePaystub = React.forwardRef<HTMLDivElement, PrintablePaystubProps>
                     <table className="stub-table">
                         <tbody>
                             <tr><td>Base Salary</td><td>${currentEarnings.regularPay.pay.toFixed(2)}</td></tr>
-                             {deferredFromPrevious && Object.entries(deferredFromPrevious).map(([key, value]) => value.pay > 0 && (
+                             {deferredFromPrevious && Object.entries(deferredFromPrevious).map(([key, value]: [string, PayDetails]) => value.pay > 0 && (
                                 <tr key={key}>
                                     <td>
                                         {key.replace(/_/g, ' ').replace('ot1 5x', 'OT 1.5x').replace('ot2x', 'OT 2.0x').replace(/\b\w/g, l => l.toUpperCase())}
@@ -2415,6 +2429,15 @@ const PrintablePaystub = React.forwardRef<HTMLDivElement, PrintablePaystubProps>
                                     <td>${value.pay.toFixed(2)}</td>
                                 </tr>
                             ))}
+                            {cashedOutHours > 0 && (
+                                <tr>
+                                    <td>
+                                        Cashed Out Overtime
+                                        <span className="detail-line">{cashedOutHours.toFixed(2)} hrs</span>
+                                    </td>
+                                    <td>${(cashedOutHours * profile.baseRate).toFixed(2)}</td>
+                                </tr>
+                            )}
                             <tr className="total-row"><td>Gross Pay</td><td>${grossPayOnStub.toFixed(2)}</td></tr>
                         </tbody>
                     </table>
@@ -2458,7 +2481,7 @@ const PrintablePaystub = React.forwardRef<HTMLDivElement, PrintablePaystubProps>
                     <h3 className="stub-section-title">Deferred to Next Pay Period</h3>
                     <table className="stub-table">
                         <tbody>
-                            {Object.entries(deferredToNext).map(([key, value]) => value.pay > 0 && (
+                            {Object.entries(deferredToNext).map(([key, value]: [string, PayDetails]) => value.pay > 0 && (
                                 <tr key={key}>
                                     <td>
                                         {key.replace(/_/g, ' ').replace('ot1 5x', 'OT 1.5x').replace('ot2x', 'OT 2.0x').replace(/\b\w/g, l => l.toUpperCase())}
@@ -2512,14 +2535,19 @@ const usePayrollCalculations = (
             }
             
             let currentYearData = annualData[pp.year];
+            
+            const cashedOutValue = Object.entries(cashedOutHours)
+                .find(([key]) => key === `${pp.year}-${pp.payPeriodOfYear}`);
+            const cashedOut = cashedOutValue ? cashedOutValue[1] : 0;
+            const cashedOutPay = cashedOut * profile.baseRate;
 
             // Calculate gross pay for the paycheck of this period
             const previousEarnings = index > 0 ? allEarnings[index - 1].earnings : null;
             const deferredFromPreviousPay = (previousEarnings && allEarnings[index-1].pp.year === pp.year) 
-                ? Object.values(previousEarnings.deferred).reduce((s, i) => s + i.pay, 0) 
+                ? Object.values(previousEarnings.deferred).reduce((s, i: PayDetails) => s + i.pay, 0) 
                 : 0;
 
-            const grossPayForPaycheck = earnings.regularPay.pay + deferredFromPreviousPay;
+            const grossPayForPaycheck = earnings.regularPay.pay + deferredFromPreviousPay + cashedOutPay;
 
             // Calculate deductions and new YTD values
             const { deductions, ytdAfter } = calculatePaycheckDetails(grossPayForPaycheck, profile, pp.year, currentYearData.ytd);
@@ -2527,10 +2555,6 @@ const usePayrollCalculations = (
             const netPay = grossPayForPaycheck - deductions.total;
 
             const startBalance = currentYearData.bankBalance;
-            const cashedOutValue = Object.entries(cashedOutHours)
-                .find(([key]) => key === `${pp.year}-${pp.payPeriodOfYear}`);
-            const cashedOut = cashedOutValue ? cashedOutValue[1] : 0;
-            
             let newBankBalance = startBalance + earnings.equivalentBankedOtHours - cashedOut;
             
             const ledgerEntry: LedgerEntry = {
