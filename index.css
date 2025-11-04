@@ -774,6 +774,43 @@ input:checked + .slider:before {
   font-weight: 500;
 }
 
+.ledger-input-container {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end; /* Aligns content to the right */
+}
+
+.ledger-input {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--removed-color);
+    font-family: inherit;
+    font-size: inherit;
+    font-weight: inherit;
+    text-align: right;
+    width: 70px;
+    padding: 2px 4px;
+    border-radius: 4px;
+    margin: 0 0.25rem;
+    transition: background-color 0.2s, border-color 0.2s;
+}
+/* Hide number input spinners for a cleaner look */
+.ledger-input::-webkit-outer-spin-button,
+.ledger-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.ledger-input[type=number] {
+  -moz-appearance: textfield;
+}
+
+.ledger-input:focus, .ledger-input:hover {
+    outline: none;
+    background: var(--background-tertiary);
+    border: 1px solid var(--border-color);
+}
+
+
 /* --- Annual Projection View Switcher --- */
 .view-switcher {
     display: inline-flex;
