@@ -721,6 +721,7 @@ const calculateEarningsForPeriod = (payPeriod: PayPeriod | null, allShifts: Shif
         shiftsToProcess.forEach(shift => {
             if (shift.type === 'O') return;
 
+            // --- Overtime Pay Calculation ---
             if (shift.category !== 'Regular') {
                 let otPay1_5x = 0, otHours1_5x = 0;
                 let otPay2x = 0, otHours2x = 0;
@@ -771,31 +772,34 @@ const calculateEarningsForPeriod = (payPeriod: PayPeriod | null, allShifts: Shif
                     deferred.ot2x.pay += otPay2x;
                 }
             } 
+            // --- Regular Shift Specifics (e.g. Stat Holiday Bonus) ---
             else {
                 if (isStatHoliday) {
                     deferred.statHolidayBonus.hours += 7.75;
                     deferred.statHolidayBonus.pay += 7.75 * 0.5 * baseRate;
                 }
-
-                if (!shift.isBookedOff) {
-                    if (shift.type === 'A') {
-                        deferred.afternoon.hours += 7.75;
-                        deferred.afternoon.pay += 7.75 * 2.75;
-                    }
-                    if (shift.type === 'N') {
-                        deferred.night.hours += 7.75;
-                        deferred.night.pay += 7.75 * 5.00;
-                    }
-                    
-                    const dayOfWeek = date.getDay();
-                    const isWeekendShift = (dayOfWeek === 6) || (dayOfWeek === 0) || (dayOfWeek === 5 && shift.type === 'A') || (dayOfWeek === 1 && shift.type === 'N');
-                    if (isWeekendShift) {
-                       deferred.weekend.hours += 7.75;
-                       deferred.weekend.pay += 7.75 * 3.25;
-                    }
-                }
             }
             
+            // --- Premiums (Afternoon, Night, Weekend) for all worked shifts ---
+            if (!shift.isBookedOff) {
+                if (shift.type === 'A') {
+                    deferred.afternoon.hours += 7.75;
+                    deferred.afternoon.pay += 7.75 * 2.75;
+                }
+                if (shift.type === 'N') {
+                    deferred.night.hours += 7.75;
+                    deferred.night.pay += 7.75 * 5.00;
+                }
+                
+                const dayOfWeek = date.getDay();
+                const isWeekendShift = (dayOfWeek === 6) || (dayOfWeek === 0) || (dayOfWeek === 5 && shift.type === 'A') || (dayOfWeek === 1 && shift.type === 'N');
+                if (isWeekendShift) {
+                   deferred.weekend.hours += 7.75;
+                   deferred.weekend.pay += 7.75 * 3.25;
+                }
+            }
+
+            // --- Escort Pay (STM) for any shift with escort ---
             if (shift.hasEscort) {
                 deferred.stm.hours += 1;
                 deferred.stm.pay += 1 * baseRate;
@@ -2335,8 +2339,9 @@ const AnnualProjectionView = ({ payPeriods, profile, allCalculatedData }: Annual
 interface LedgerProps {
     profile: ProfileData | null;
     allCalculatedData: LedgerEntry[];
+    onSaveCashedOutHours: (year: number, ppNumber: number, hours: number) => void;
 }
-const Ledger = ({ profile, allCalculatedData }: LedgerProps) => {
+const Ledger = ({ profile, allCalculatedData, onSaveCashedOutHours }: LedgerProps) => {
 
     if (!profile?.baseRate || profile.baseRate <= 0) {
         return (
@@ -2371,7 +2376,19 @@ const Ledger = ({ profile, allCalculatedData }: LedgerProps) => {
                                 <span data-label="Pay Period">{entry.year} - PP {entry.ppNumber}</span>
                                 <span data-label="Start Balance">{entry.startBalance.toFixed(2)} hrs</span>
                                 <span data-label="Banked" className="added">+ {entry.earnings.equivalentBankedOtHours.toFixed(2)} hrs</span>
-                                <span data-label="Cashed Out" className="removed">- {entry.cashedOut.toFixed(2)} hrs</span>
+                                <span data-label="Cashed Out" className="removed ledger-input-container">
+                                    -
+                                    <input
+                                        type="number"
+                                        className="ledger-input"
+                                        value={entry.cashedOut}
+                                        onChange={(e) => onSaveCashedOutHours(entry.year, entry.ppNumber, parseFloat(e.target.value) || 0)}
+                                        step="0.01"
+                                        min="0"
+                                        aria-label={`Cashed out hours for Pay Period ${entry.ppNumber}, ${entry.year}`}
+                                    />
+                                    hrs
+                                </span>
                                 <span data-label="End Balance">{entry.endBalance.toFixed(2)} hrs</span>
                             </div>
                         ))}
@@ -2805,7 +2822,7 @@ const App = () => {
             case 'schedule':
                 return <WorkSchedule profile={profile} shifts={shifts} onSaveShifts={handleSaveShifts} payPeriods={payPeriods} allStatHolidays={allStatHolidays} isSaving={isSavingData}/>;
             case 'ledger':
-                return <Ledger profile={profile} allCalculatedData={allCalculatedData} />;
+                return <Ledger profile={profile} allCalculatedData={allCalculatedData} onSaveCashedOutHours={handleSaveCashedOutHours} />;
             case 'profile':
                 return <Profile profile={profile} onSave={handleSaveProfile} isSaving={isSavingData} />;
             default:
