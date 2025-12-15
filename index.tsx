@@ -31,7 +31,6 @@ if ('caches' in window) {
     keys.forEach(key => caches.delete(key));
   });
 }
-
 // --- Supabase Configuration ---
 // IMPORTANT: For local development in AI Studio, replace these placeholders.
 // You can get these from your Supabase project's "Project Settings" > "API".
@@ -116,6 +115,7 @@ interface UserData {
   profile: ProfileData;
   shifts: ShiftsData;
   cashedOutHours: CashedOutHoursData;
+  manualBankedHours: CashedOutHoursData;
 }
 
 type User = UserData & {
@@ -236,7 +236,7 @@ const api = {
         
         const { data, error } = await supabase
             .from('profiles')
-            .select('email, profile, shifts, cashedOutHours: cashedouthours')
+            .select('email, profile, shifts, cashedOutHours: cashedouthours, manualBankedHours: manualbankedhours')
             .eq('id', uid)
             .single();
 
@@ -299,6 +299,7 @@ const api = {
                 profile: data.profile,
                 shifts: data.shifts || {},
                 cashedOutHours: data.cashedOutHours || {},
+                manualBankedHours: data.manualBankedHours || {},
             } as UserData;
         }
 
@@ -333,7 +334,8 @@ const api = {
                 }
             },
             shifts: {},
-            cashedOutHours: {}
+            cashedOutHours: {},
+            manualBankedHours: {}
         };
         
         await api.saveUserData(uid, newUserData);
@@ -342,12 +344,13 @@ const api = {
     saveUserData: async (uid: string, dataToSave: Partial<UserData>) => {
         if (!isSupabaseConfigured) throw new Error("Database not configured.");
 
-        const { cashedOutHours, ...restData } = dataToSave;
+        const { cashedOutHours, manualBankedHours, ...restData } = dataToSave;
         
         const payload = {
             id: uid,
             ...restData,
             ...(cashedOutHours !== undefined && { cashedouthours: cashedOutHours }),
+            ...(manualBankedHours !== undefined && { manualbankedhours: manualBankedHours }),
         };
 
         const { error } = await supabase
@@ -414,6 +417,7 @@ const PAYROLL_DATA: { [key: number]: any } = {
 };
 // Add future years as they become available. Logic will fall back to the last known year.
 PAYROLL_DATA[2025] = PAYROLL_DATA[2024]; // Placeholder for future data
+PAYROLL_DATA[2026] = PAYROLL_DATA[2025]; // Placeholder for future data
 
 const getPayrollConstantsForYear = (year: number) => {
     return PAYROLL_DATA[year] || PAYROLL_DATA[Math.max(...Object.keys(PAYROLL_DATA).map(Number))];
@@ -826,6 +830,7 @@ CREATE TABLE public.profiles (
   profile JSONB,
   shifts JSONB,
   cashedouthours JSONB,
+  manualbankedhours JSONB,
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -860,6 +865,7 @@ EXECUTE FUNCTION public.handle_updated_at();
 -- 6. Add comments on the columns for clarity.
 COMMENT ON TABLE public.profiles IS 'Stores user-specific data like profile settings and work shifts.';
 COMMENT ON COLUMN public.profiles.id IS 'Links to the authenticated user in auth.users.';
+COMMENT ON COLUMN public.profiles.manualbankedhours IS 'Stores manually entered banked hours, overriding calculations.';
     `.trim();
 };
 
@@ -2099,7 +2105,7 @@ const PayPeriodDetailView = ({ payPeriod, previousPayPeriod, profile, currentDat
                         <input
                             type="number"
                             id="cashed-out-hours"
-                            value={cashedOut}
+                            value={cashedOut || ''}
                             onChange={(e) => onSaveCashedOutHours(parseFloat(e.target.value) || 0)}
                             placeholder="0"
                         />
@@ -2340,8 +2346,9 @@ interface LedgerProps {
     profile: ProfileData | null;
     allCalculatedData: LedgerEntry[];
     onSaveCashedOutHours: (year: number, ppNumber: number, hours: number) => void;
+    onSaveManualBankedHours: (year: number, ppNumber: number, hours: number) => void;
 }
-const Ledger = ({ profile, allCalculatedData, onSaveCashedOutHours }: LedgerProps) => {
+const Ledger = ({ profile, allCalculatedData, onSaveCashedOutHours, onSaveManualBankedHours }: LedgerProps) => {
 
     if (!profile?.baseRate || profile.baseRate <= 0) {
         return (
@@ -2375,13 +2382,25 @@ const Ledger = ({ profile, allCalculatedData, onSaveCashedOutHours }: LedgerProp
                             <div key={entry.globalPPNumber} className="ledger-row">
                                 <span data-label="Pay Period">{entry.year} - PP {entry.ppNumber}</span>
                                 <span data-label="Start Balance">{entry.startBalance.toFixed(2)} hrs</span>
-                                <span data-label="Banked" className="added">+ {entry.earnings.equivalentBankedOtHours.toFixed(2)} hrs</span>
+                                <span data-label="Banked" className="added ledger-input-container">
+                                    +
+                                    <input
+                                        type="number"
+                                        className="ledger-input"
+                                        value={entry.earnings.equivalentBankedOtHours || ''}
+                                        onChange={(e) => onSaveManualBankedHours(entry.year, entry.ppNumber, parseFloat(e.target.value) || 0)}
+                                        step="0.01"
+                                        min="0"
+                                        aria-label={`Manually banked hours for Pay Period ${entry.ppNumber}, ${entry.year}`}
+                                    />
+                                    hrs
+                                </span>
                                 <span data-label="Cashed Out" className="removed ledger-input-container">
                                     -
                                     <input
                                         type="number"
                                         className="ledger-input"
-                                        value={entry.cashedOut}
+                                        value={entry.cashedOut || ''}
                                         onChange={(e) => onSaveCashedOutHours(entry.year, entry.ppNumber, parseFloat(e.target.value) || 0)}
                                         step="0.01"
                                         min="0"
@@ -2520,7 +2539,8 @@ const PrintablePaystub = React.forwardRef<HTMLDivElement, PrintablePaystubProps>
 const usePayrollCalculations = (
     profile: ProfileData | null, 
     shifts: ShiftsData, 
-    cashedOutHours: CashedOutHoursData, 
+    cashedOutHours: CashedOutHoursData,
+    manualBankedHours: CashedOutHoursData,
     payPeriods: PayPeriod[], 
     allStatHolidays: Record<string, string>
 ): LedgerEntry[] => {
@@ -2528,39 +2548,44 @@ const usePayrollCalculations = (
         if (!profile?.baseRate || profile.baseRate <= 0) return [];
 
         const sortedPayPeriods = [...payPeriods].sort((a, b) => a.number - b.number);
-        
         const annualData: { [year: number]: { ytd: YTDValues, bankBalance: number } } = {};
 
-        const allEarnings = sortedPayPeriods.map(pp => ({
-            pp,
-            earnings: calculateEarningsForPeriod(pp, shifts, profile, allStatHolidays)
-        }));
+        // Pre-calculate all earnings to avoid mutation issues within the main loop.
+        const allPreCalculatedEarnings = sortedPayPeriods.map(pp => 
+            calculateEarningsForPeriod(pp, shifts, profile, allStatHolidays)
+        );
 
-        return allEarnings.map((item, index) => {
-            const { pp, earnings } = item;
-            if (!earnings) return null;
+        return sortedPayPeriods.map((pp, index) => {
+            const originalEarnings = allPreCalculatedEarnings[index];
+            if (!originalEarnings) return null;
+
+            // Create a deep copy to ensure calculations are pure and don't have side effects.
+            const earnings = JSON.parse(JSON.stringify(originalEarnings));
 
             // Initialize YTD and bank balance for a new year
             if (!annualData[pp.year]) {
+                const lastYear = pp.year - 1;
                 annualData[pp.year] = { 
                     ytd: { gross: 0, cpp: 0, ei: 0 },
-                    // Carry over bank balance from the end of the previous year
-                    bankBalance: pp.year > Math.min(...Object.keys(annualData).map(Number)) 
-                        ? annualData[pp.year - 1]?.bankBalance || 0 
-                        : 0
+                    bankBalance: annualData[lastYear]?.bankBalance || 0 
                 };
             }
             
             let currentYearData = annualData[pp.year];
             
-            const cashedOutValue = Object.entries(cashedOutHours)
-                .find(([key]) => key === `${pp.year}-${pp.payPeriodOfYear}`);
-            const cashedOut = cashedOutValue ? cashedOutValue[1] : 0;
+            // Apply manual banked hours override if it exists
+            const manualBankedKey = `${pp.year}-${pp.payPeriodOfYear}`;
+            if (manualBankedHours.hasOwnProperty(manualBankedKey)) {
+                earnings.equivalentBankedOtHours = manualBankedHours[manualBankedKey];
+            }
+
+            const cashedOut = cashedOutHours[`${pp.year}-${pp.payPeriodOfYear}`] || 0;
             const cashedOutPay = cashedOut * profile.baseRate;
 
             // Calculate gross pay for the paycheck of this period
-            const previousEarnings = index > 0 ? allEarnings[index - 1].earnings : null;
-            const deferredFromPreviousPay = (previousEarnings && allEarnings[index-1].pp.year === pp.year) 
+            const previousEarnings = index > 0 ? allPreCalculatedEarnings[index - 1] : null;
+            
+            const deferredFromPreviousPay = previousEarnings 
                 ? Object.values(previousEarnings.deferred).reduce((s, i: PayDetails) => s + i.pay, 0) 
                 : 0;
 
@@ -2572,7 +2597,7 @@ const usePayrollCalculations = (
             const netPay = grossPayForPaycheck - deductions.total;
 
             const startBalance = currentYearData.bankBalance;
-            let newBankBalance = startBalance + earnings.equivalentBankedOtHours - cashedOut;
+            const newBankBalance = startBalance + earnings.equivalentBankedOtHours - cashedOut;
             
             const ledgerEntry: LedgerEntry = {
                 ppNumber: pp.payPeriodOfYear,
@@ -2599,7 +2624,7 @@ const usePayrollCalculations = (
             return ledgerEntry;
         }).filter(Boolean) as LedgerEntry[];
 
-    }, [profile, shifts, cashedOutHours, payPeriods, allStatHolidays]);
+    }, [profile, shifts, cashedOutHours, manualBankedHours, payPeriods, allStatHolidays]);
 };
 
 
@@ -2609,6 +2634,7 @@ const App = () => {
     const [profile, setProfile] = useState<ProfileData | null>(null);
     const [shifts, setShifts] = useState<ShiftsData>({});
     const [cashedOutHours, setCashedOutHours] = useState<CashedOutHoursData>({});
+    const [manualBankedHours, setManualBankedHours] = useState<CashedOutHoursData>({});
     const [loading, setLoading] = useState(true);
     const [dbError, setDbError] = useState<string | null>(null);
     const [isSavingData, setIsSavingData] = useState(false);
@@ -2683,7 +2709,7 @@ const App = () => {
         return { payPeriods: periods, allStatHolidays: holidays };
     }, []);
 
-    const allCalculatedData = usePayrollCalculations(profile, shifts, cashedOutHours, payPeriods, allStatHolidays);
+    const allCalculatedData = usePayrollCalculations(profile, shifts, cashedOutHours, manualBankedHours, payPeriods, allStatHolidays);
 
     const handleLogout = async () => {
         await api.logout();
@@ -2716,6 +2742,7 @@ const App = () => {
                 setProfile(null);
                 setShifts({});
                 setCashedOutHours({});
+                setManualBankedHours({});
                 setLoading(false);
                 return;
             }
@@ -2733,6 +2760,7 @@ const App = () => {
                 setProfile(userData.profile);
                 setShifts(userData.shifts || {});
                 setCashedOutHours(userData.cashedOutHours || {});
+                setManualBankedHours(userData.manualBankedHours || {});
             } catch (error: any) {
                 const isMissingTableError = error.code === '42P01' || (error.message && error.message.includes('relation "public.profiles" does not exist'));
                 if (isMissingTableError) {
@@ -2813,6 +2841,25 @@ const App = () => {
         }
     };
 
+    const handleSaveManualBankedHours = async (year: number, ppNumber: number, hours: number) => {
+        if (!user) return;
+        const key = `${year}-${ppNumber}`;
+        setIsSavingData(true);
+        setSavingMessage('Saving...');
+        const updatedHours = {
+            ...manualBankedHours,
+            [key]: hours,
+        };
+        setManualBankedHours(updatedHours);
+        try {
+            await api.saveUserData(user.uid, { manualBankedHours: updatedHours });
+        } catch (error) {
+            console.error("Failed to save manual banked hours:", error);
+        } finally {
+            setIsSavingData(false);
+        }
+    };
+
     const renderCurrentPage = () => {
         if (!profile || !allCalculatedData) return <LoadingSpinner />;
 
@@ -2822,7 +2869,7 @@ const App = () => {
             case 'schedule':
                 return <WorkSchedule profile={profile} shifts={shifts} onSaveShifts={handleSaveShifts} payPeriods={payPeriods} allStatHolidays={allStatHolidays} isSaving={isSavingData}/>;
             case 'ledger':
-                return <Ledger profile={profile} allCalculatedData={allCalculatedData} onSaveCashedOutHours={handleSaveCashedOutHours} />;
+                return <Ledger profile={profile} allCalculatedData={allCalculatedData} onSaveCashedOutHours={handleSaveCashedOutHours} onSaveManualBankedHours={handleSaveManualBankedHours} />;
             case 'profile':
                 return <Profile profile={profile} onSave={handleSaveProfile} isSaving={isSavingData} />;
             default:
@@ -2861,6 +2908,9 @@ const App = () => {
         </div>
     );
 }
+
+const root = ReactDOM.createRoot(document.getElementById('root') as HTMLElement);
+root.render(<App />);
 
 const root = ReactDOM.createRoot(document.getElementById('root') as HTMLElement);
 root.render(<App />);
