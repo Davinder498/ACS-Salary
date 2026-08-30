@@ -1218,11 +1218,15 @@ const WorkSchedule = React.memo(({ profile, shifts, onSaveShifts, onSaveAbsence,
         handleNavigation(selectedYear, ppInYear);
     };
 
+    const openAbsenceModal = (reason: NonNullable<Shift['absenceReason']>) => {
+        setAbsenceReason(reason);
+        setIsAbsenceModalOpen(true);
+    };
+
     return (
         <div>
             <div className="schedule-header">
                 <h2>Work Schedule</h2>
-                <button className="secondary-btn" onClick={() => setIsAbsenceModalOpen(true)}>Add General Illness or WCB</button>
                 <div className="schedule-nav">
                     <label htmlFor="year-nav">Year</label>
                     <select id="year-nav" value={selectedYear} onChange={handleYearChange}>
@@ -1238,6 +1242,17 @@ const WorkSchedule = React.memo(({ profile, shifts, onSaveShifts, onSaveAbsence,
                     </select>
                 </div>
             </div>
+            <section className="schedule-absence-actions" aria-labelledby="time-off-heading">
+                <div>
+                    <h3 id="time-off-heading">Unpaid Time Off</h3>
+                    <p>Add a date or date range. Scheduled shifts in that range will be removed from gross pay.</p>
+                </div>
+                <div className="schedule-absence-buttons">
+                    <button type="button" onClick={() => openAbsenceModal('GI')}>Add General Illness (GI)</button>
+                    <button type="button" className="secondary-btn" onClick={() => openAbsenceModal('WCB')}>Add WCB</button>
+                    <button type="button" className="secondary-btn" onClick={() => openAbsenceModal('Other Illness')}>Add Other Illness</button>
+                </div>
+            </section>
             {payPeriodsForYear.map(pp => (
                 <div key={pp.number} id={`pay-period-${pp.number}`} className="pay-period-container">
                     <h3>Pay Period {pp.payPeriodOfYear} ({pp.year}) | {pp.start.toLocaleDateString()} - {pp.end.toLocaleDateString()}</h3>
