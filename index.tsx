@@ -2321,15 +2321,7 @@ const App = () => {
 
     const [currentPage, setPage] = useState(() => {
         const savedPage = localStorage.getItem('acs-salary-current-page');
-codex/remove-taxation-features-from-the-app-i3idjy
- codex/remove-taxation-features-from-the-app-i3idjy
-
- codex/remove-taxation-features-from-the-app-j7pidr
- main
         return ['dashboard', 'schedule', 'timeoff', 'ledger', 'profile'].includes(savedPage || '') ? savedPage! : 'dashboard';
-
-        return ['dashboard', 'schedule', 'ledger', 'profile'].includes(savedPage || '') ? savedPage! : 'dashboard';
-main
     });
     const [isSidebarOpen, setSidebarOpen] = useState(false);
     const [theme, setTheme] = useState(() => localStorage.getItem("acs-salary-theme") || "dark");
@@ -2513,11 +2505,6 @@ main
         }
     };
 
-codex/remove-taxation-features-from-the-app-i3idjy
-codex/remove-taxation-features-from-the-app-i3idjy
-
-codex/remove-taxation-features-from-the-app-j7pidr
- main
     const removeAbsenceRangeFrom = (data: ShiftsData, range: AbsenceRange) => {
         const updated = { ...data };
         const start = new Date(`${range.startDate}T00:00:00`);
@@ -2546,35 +2533,13 @@ codex/remove-taxation-features-from-the-app-j7pidr
 
     const handleSaveAbsence = async (original: AbsenceRange | null, updatedRange: AbsenceRange) => {
         const { startDate, endDate, reason } = updatedRange;
-
-    const handleSaveAbsence = async (startDate: string, endDate: string, reason: NonNullable<Shift['absenceReason']>) => {
-codex/remove-taxation-features-from-the-app-i3idjy
-main
-
- main
- main
         if (!user || !startDate || !endDate || endDate < startDate) return;
         const start = new Date(`${startDate}T00:00:00`);
         const end = new Date(`${endDate}T00:00:00`);
         const numberOfDays = Math.round((end.getTime() - start.getTime()) / 86400000) + 1;
- codex/remove-taxation-features-from-the-app-i3idjy
- codex/remove-taxation-features-from-the-app-i3idjy
-
- codex/remove-taxation-features-from-the-app-j7pidr
- main
         if (numberOfDays < 1 || numberOfDays > 730) return alert('Please select a period of 730 days or fewer.');
 
         const updatedShifts = original ? removeAbsenceRangeFrom(shifts, original) : { ...shifts };
-
-        if (numberOfDays < 1 || numberOfDays > 730) {
-            alert('Please select an illness period of 730 days or fewer.');
-            return;
-        }
-
-        setIsSavingData(true);
-        setSavingMessage('Saving time off...');
-        const updatedShifts = { ...shifts };
-main
         for (let offset = 0; offset < numberOfDays; offset++) {
             const date = addDays(start, offset);
             updatedShifts[toISODateString(date)] = [{
@@ -2582,26 +2547,11 @@ main
                 isBookedOff: true, absenceReason: reason
             }];
         }
-codex/remove-taxation-features-from-the-app-i3idjy
- codex/remove-taxation-features-from-the-app-i3idjy
-
- codex/remove-taxation-features-from-the-app-j7pidr
- main
         await persistTimeOff(updatedShifts);
     };
 
     const handleRemoveAbsence = async (range: AbsenceRange) => {
         await persistTimeOff(removeAbsenceRangeFrom(shifts, range));
-
-        setShifts(updatedShifts);
-        try {
-            await api.saveUserData(user.uid, { shifts: updatedShifts });
-        } catch (error) {
-            console.error('Failed to save time off:', error);
-        } finally {
-            setIsSavingData(false);
-        }
- main
     };
     
     const handleSaveCashedOutHours = async (year: number, ppNumber: number, hours: number) => {
@@ -2653,22 +2603,9 @@ codex/remove-taxation-features-from-the-app-i3idjy
             case 'dashboard':
                 return <Dashboard profile={profile} allCalculatedData={allCalculatedData} onSaveCashedOutHours={handleSaveCashedOutHours} payPeriods={payPeriods} />;
             case 'schedule':
-codex/remove-taxation-features-from-the-app-i3idjy
-codex/remove-taxation-features-from-the-app-i3idjy
-
-codex/remove-taxation-features-from-the-app-j7pidr
-main
-                return <WorkSchedule profile={profile} shifts={shifts} onSaveShifts={handleSaveShifts} payPeriods={payPeriods} allStatHolidays={allStatHolidays} isSaving={isSavingData}/>;
+                return <WorkSchedule profile={profile} shifts={shifts} onSaveShifts={handleSaveShifts} onSaveAbsence={(startDate, endDate, reason) => handleSaveAbsence(null, { startDate, endDate, reason })} payPeriods={payPeriods} allStatHolidays={allStatHolidays} isSaving={isSavingData}/>;
             case 'timeoff':
                 return <UnpaidTimeOff shifts={shifts} isSaving={isSavingData} onSave={handleSaveAbsence} onRemove={handleRemoveAbsence} />;
-
- codex/remove-taxation-features-from-the-app-i3idjy
-                return <WorkSchedule profile={profile} shifts={shifts} onSaveShifts={handleSaveShifts} onSaveAbsence={handleSaveAbsence} payPeriods={payPeriods} allStatHolidays={allStatHolidays} isSaving={isSavingData}/>;
- main
-
-               return <WorkSchedule profile={profile} shifts={shifts} onSaveShifts={handleSaveShifts} onSaveAbsence={handleSaveAbsence} payPeriods={payPeriods} allStatHolidays={allStatHolidays} isSaving={isSavingData}/>;
-main
-main
             case 'ledger':
                 return <Ledger profile={profile} allCalculatedData={allCalculatedData} onSaveCashedOutHours={handleSaveCashedOutHours} onSaveManualBankedHours={handleSaveManualBankedHours} />;
             case 'profile':
