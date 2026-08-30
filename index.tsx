@@ -1,6 +1,3 @@
-import { clearBrowserCache } from './cacheCleaner';
-clearBrowserCache(); // Clear old service workers and caches
-
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import ReactDOM from 'react-dom/client';
 import jsPDF from 'jspdf';
@@ -25,12 +22,6 @@ fetch('/metadata.json')
   })
   .catch(() => console.warn('Failed to fetch metadata.json'));
 
-// Clear old caches automatically on app load
-if ('caches' in window) {
-  caches.keys().then(keys => {
-    keys.forEach(key => caches.delete(key));
-  });
-}
 // --- Supabase Configuration ---
 // Backend coordinates are deployment configuration, never source-controlled defaults.
 const getSupabaseEnv = (key: string): string | undefined => {
@@ -2212,7 +2203,10 @@ const App = () => {
     const [isSavingData, setIsSavingData] = useState(false);
     const [savingMessage, setSavingMessage] = useState('Saving...');
 
-    const [currentPage, setPage] = useState('dashboard');
+    const [currentPage, setPage] = useState(() => {
+        const savedPage = localStorage.getItem('acs-salary-current-page');
+        return ['dashboard', 'schedule', 'ledger', 'profile'].includes(savedPage || '') ? savedPage! : 'dashboard';
+    });
     const [isSidebarOpen, setSidebarOpen] = useState(false);
     const [theme, setTheme] = useState(() => localStorage.getItem("acs-salary-theme") || "dark");
     
@@ -2246,6 +2240,10 @@ const App = () => {
         document.documentElement.setAttribute('data-theme', theme);
         localStorage.setItem('acs-salary-theme', theme);
     }, [theme]);
+
+    useEffect(() => {
+        localStorage.setItem('acs-salary-current-page', currentPage);
+    }, [currentPage]);
 
     const toggleTheme = () => setTheme(prev => prev === "dark" ? "light" : "dark");
 
@@ -2285,6 +2283,7 @@ const App = () => {
 
     const handleLogout = async () => {
         await api.logout();
+        localStorage.removeItem('acs-salary-current-page');
         setPage('dashboard');
     };
 
