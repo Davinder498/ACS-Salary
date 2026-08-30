@@ -258,6 +258,7 @@ const api = {
 // --- SVG ICONS ---
 const DashboardIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="M7 12v5h12V8H7z"/><path d="M11 12v5"/><path d="M15 12v5"/><path d="M7 8V5l4 3 4-3v3"/></svg>);
 const ScheduleIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>);
+const TimeOffIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 2v4M16 2v4M3 10h18"/><rect x="3" y="4" width="18" height="18" rx="2"/><path d="m9 16 2 2 4-5"/></svg>);
 const ProfileIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>);
 const LedgerIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>);
 const DownloadIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>);
@@ -899,7 +900,7 @@ const AuthScreen = () => {
 
 interface MobileHeaderProps { currentPage: string; onMenuClick: () => void; }
 const MobileHeader = ({ currentPage, onMenuClick }: MobileHeaderProps) => {
-    const pageTitle = currentPage.charAt(0).toUpperCase() + currentPage.slice(1);
+    const pageTitle = currentPage === 'timeoff' ? 'Unpaid Time Off' : currentPage.charAt(0).toUpperCase() + currentPage.slice(1);
     return (
         <div className="mobile-header">
             <button onClick={onMenuClick} className="hamburger-btn" aria-label="Open menu">
@@ -939,6 +940,7 @@ const Sidebar = ({ currentPage, setPage, onLogout, isOpen, onClose, theme, toggl
             <nav>
                 <button className={currentPage === 'dashboard' ? 'active' : ''} onClick={() => setPage('dashboard')}><DashboardIcon /> <span>Dashboard</span></button>
                 <button className={currentPage === 'schedule' ? 'active' : ''} onClick={() => setPage('schedule')}><ScheduleIcon /> <span>Work Schedule</span></button>
+                <button className={currentPage === 'timeoff' ? 'active' : ''} onClick={() => setPage('timeoff')}><TimeOffIcon /> <span>Unpaid Time Off</span></button>
                 <button className={currentPage === 'ledger' ? 'active' : ''} onClick={() => setPage('ledger')}><LedgerIcon /> <span>Banked OT Ledger</span></button>
                 <button className={currentPage === 'profile' ? 'active' : ''} onClick={() => setPage('profile')}><ProfileIcon /> <span>Profile</span></button>
             </nav>
@@ -1141,6 +1143,105 @@ const Profile = React.memo(({ profile, onSave, isSaving }: ProfileProps) => {
         </div>
     );
 });
+
+interface AbsenceRange {
+    startDate: string;
+    endDate: string;
+    reason: NonNullable<Shift['absenceReason']>;
+}
+
+interface UnpaidTimeOffProps {
+    shifts: ShiftsData;
+    isSaving: boolean;
+    onSave: (original: AbsenceRange | null, updated: AbsenceRange) => void;
+    onRemove: (range: AbsenceRange) => void;
+}
+
+const UnpaidTimeOff = ({ shifts, isSaving, onSave, onRemove }: UnpaidTimeOffProps) => {
+    const today = toISODateString(new Date());
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [editingRange, setEditingRange] = useState<AbsenceRange | null>(null);
+    const [startDate, setStartDate] = useState(today);
+    const [endDate, setEndDate] = useState(today);
+    const [reason, setReason] = useState<AbsenceRange['reason']>('GI');
+
+    const ranges = useMemo(() => {
+        const days = Object.entries(shifts)
+            .flatMap(([date, dayShifts]) => dayShifts
+                .filter(shift => shift.type === 'O' && shift.absenceReason)
+                .map(shift => ({ date, reason: shift.absenceReason! })))
+            .sort((a, b) => a.date.localeCompare(b.date));
+
+        return days.reduce<AbsenceRange[]>((result, day) => {
+            const previous = result[result.length - 1];
+            const expectedNextDate = previous
+                ? toISODateString(addDays(new Date(`${previous.endDate}T00:00:00`), 1))
+                : '';
+            if (previous && previous.reason === day.reason && expectedNextDate === day.date) {
+                previous.endDate = day.date;
+            } else {
+                result.push({ startDate: day.date, endDate: day.date, reason: day.reason });
+            }
+            return result;
+        }, []);
+    }, [shifts]);
+
+    const openAdd = () => {
+        setEditingRange(null);
+        setStartDate(today);
+        setEndDate(today);
+        setReason('GI');
+        setIsModalOpen(true);
+    };
+
+    const openEdit = (range: AbsenceRange) => {
+        setEditingRange(range);
+        setStartDate(range.startDate);
+        setEndDate(range.endDate);
+        setReason(range.reason);
+        setIsModalOpen(true);
+    };
+
+    return (
+        <div>
+            <div className="page-header time-off-page-header">
+                <div><h2>Unpaid Time Off</h2><p>Manage General Illness, WCB, and other unpaid illness periods.</p></div>
+                <button type="button" onClick={openAdd}>Add Time Off</button>
+            </div>
+            <div className="card">
+                {ranges.length === 0 ? (
+                    <div className="empty-state"><h3>No unpaid time off</h3><p>Add a period to remove its scheduled regular shifts from gross pay.</p></div>
+                ) : (
+                    <div className="time-off-list">
+                        {ranges.map(range => (
+                            <div className="time-off-row" key={`${range.startDate}-${range.endDate}-${range.reason}`}>
+                                <div><strong>{range.reason}</strong><span>{new Date(`${range.startDate}T00:00:00`).toLocaleDateString()} – {new Date(`${range.endDate}T00:00:00`).toLocaleDateString()}</span></div>
+                                <div className="time-off-row-actions">
+                                    <button type="button" className="secondary-btn" onClick={() => openEdit(range)}>Edit</button>
+                                    <button type="button" className="remove-shift-btn" onClick={() => onRemove(range)} disabled={isSaving}>Remove</button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+            <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={editingRange ? 'Edit Unpaid Time Off' : 'Add Unpaid Time Off'}>
+                <form onSubmit={event => {
+                    event.preventDefault();
+                    onSave(editingRange, { startDate, endDate, reason });
+                    setIsModalOpen(false);
+                }}>
+                    <div className="absence-date-grid">
+                        <div className="form-group"><label htmlFor="time-off-start">First day off</label><input id="time-off-start" type="date" value={startDate} onChange={event => { setStartDate(event.target.value); if (event.target.value > endDate) setEndDate(event.target.value); }} required /></div>
+                        <div className="form-group"><label htmlFor="time-off-end">Last day off</label><input id="time-off-end" type="date" min={startDate} value={endDate} onChange={event => setEndDate(event.target.value)} required /></div>
+                    </div>
+                    <div className="form-group"><label htmlFor="time-off-reason">Type</label><select id="time-off-reason" value={reason} onChange={event => setReason(event.target.value as AbsenceRange['reason'])}><option value="GI">General Illness (GI)</option><option value="WCB">WCB</option><option value="Other Illness">Other Illness</option></select></div>
+                    <div className="editor-footer"><button type="button" className="cancel-btn" onClick={() => setIsModalOpen(false)}>Cancel</button><button type="submit" className="save-btn" disabled={isSaving || endDate < startDate}>{isSaving ? 'Saving...' : editingRange ? 'Save Changes' : 'Add Time Off'}</button></div>
+                </form>
+            </Modal>
+        </div>
+    );
+};
 
 interface WorkScheduleProps {
     profile: ProfileData;
@@ -2220,7 +2321,11 @@ const App = () => {
 
     const [currentPage, setPage] = useState(() => {
         const savedPage = localStorage.getItem('acs-salary-current-page');
+ codex/remove-taxation-features-from-the-app-j7pidr
+        return ['dashboard', 'schedule', 'timeoff', 'ledger', 'profile'].includes(savedPage || '') ? savedPage! : 'dashboard';
+
         return ['dashboard', 'schedule', 'ledger', 'profile'].includes(savedPage || '') ? savedPage! : 'dashboard';
+main
     });
     const [isSidebarOpen, setSidebarOpen] = useState(false);
     const [theme, setTheme] = useState(() => localStorage.getItem("acs-salary-theme") || "dark");
@@ -2404,11 +2509,47 @@ const App = () => {
         }
     };
 
+codex/remove-taxation-features-from-the-app-j7pidr
+    const removeAbsenceRangeFrom = (data: ShiftsData, range: AbsenceRange) => {
+        const updated = { ...data };
+        const start = new Date(`${range.startDate}T00:00:00`);
+        const end = new Date(`${range.endDate}T00:00:00`);
+        const numberOfDays = Math.round((end.getTime() - start.getTime()) / 86400000) + 1;
+        for (let offset = 0; offset < numberOfDays; offset++) {
+            const key = toISODateString(addDays(start, offset));
+            if (updated[key]?.some(shift => shift.absenceReason)) delete updated[key];
+        }
+        return updated;
+    };
+
+    const persistTimeOff = async (updatedShifts: ShiftsData) => {
+        if (!user) return;
+        setShifts(updatedShifts);
+        setIsSavingData(true);
+        setSavingMessage('Saving time off...');
+        try {
+            await api.saveUserData(user.uid, { shifts: updatedShifts });
+        } catch (error) {
+            console.error('Failed to save time off:', error);
+        } finally {
+            setIsSavingData(false);
+        }
+    };
+
+    const handleSaveAbsence = async (original: AbsenceRange | null, updatedRange: AbsenceRange) => {
+        const { startDate, endDate, reason } = updatedRange;
+
     const handleSaveAbsence = async (startDate: string, endDate: string, reason: NonNullable<Shift['absenceReason']>) => {
+ main
         if (!user || !startDate || !endDate || endDate < startDate) return;
         const start = new Date(`${startDate}T00:00:00`);
         const end = new Date(`${endDate}T00:00:00`);
         const numberOfDays = Math.round((end.getTime() - start.getTime()) / 86400000) + 1;
+ codex/remove-taxation-features-from-the-app-j7pidr
+        if (numberOfDays < 1 || numberOfDays > 730) return alert('Please select a period of 730 days or fewer.');
+
+        const updatedShifts = original ? removeAbsenceRangeFrom(shifts, original) : { ...shifts };
+
         if (numberOfDays < 1 || numberOfDays > 730) {
             alert('Please select an illness period of 730 days or fewer.');
             return;
@@ -2417,6 +2558,7 @@ const App = () => {
         setIsSavingData(true);
         setSavingMessage('Saving time off...');
         const updatedShifts = { ...shifts };
+main
         for (let offset = 0; offset < numberOfDays; offset++) {
             const date = addDays(start, offset);
             updatedShifts[toISODateString(date)] = [{
@@ -2424,6 +2566,13 @@ const App = () => {
                 isBookedOff: true, absenceReason: reason
             }];
         }
+ codex/remove-taxation-features-from-the-app-j7pidr
+        await persistTimeOff(updatedShifts);
+    };
+
+    const handleRemoveAbsence = async (range: AbsenceRange) => {
+        await persistTimeOff(removeAbsenceRangeFrom(shifts, range));
+
         setShifts(updatedShifts);
         try {
             await api.saveUserData(user.uid, { shifts: updatedShifts });
@@ -2432,6 +2581,7 @@ const App = () => {
         } finally {
             setIsSavingData(false);
         }
+ main
     };
     
     const handleSaveCashedOutHours = async (year: number, ppNumber: number, hours: number) => {
@@ -2483,7 +2633,13 @@ const App = () => {
             case 'dashboard':
                 return <Dashboard profile={profile} allCalculatedData={allCalculatedData} onSaveCashedOutHours={handleSaveCashedOutHours} payPeriods={payPeriods} />;
             case 'schedule':
-                return <WorkSchedule profile={profile} shifts={shifts} onSaveShifts={handleSaveShifts} onSaveAbsence={handleSaveAbsence} payPeriods={payPeriods} allStatHolidays={allStatHolidays} isSaving={isSavingData}/>;
+codex/remove-taxation-features-from-the-app-j7pidr
+                return <WorkSchedule profile={profile} shifts={shifts} onSaveShifts={handleSaveShifts} payPeriods={payPeriods} allStatHolidays={allStatHolidays} isSaving={isSavingData}/>;
+            case 'timeoff':
+                return <UnpaidTimeOff shifts={shifts} isSaving={isSavingData} onSave={handleSaveAbsence} onRemove={handleRemoveAbsence} />;
+
+               return <WorkSchedule profile={profile} shifts={shifts} onSaveShifts={handleSaveShifts} onSaveAbsence={handleSaveAbsence} payPeriods={payPeriods} allStatHolidays={allStatHolidays} isSaving={isSavingData}/>;
+main
             case 'ledger':
                 return <Ledger profile={profile} allCalculatedData={allCalculatedData} onSaveCashedOutHours={handleSaveCashedOutHours} onSaveManualBankedHours={handleSaveManualBankedHours} />;
             case 'profile':
