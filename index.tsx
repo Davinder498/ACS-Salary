@@ -1247,13 +1247,18 @@ interface WorkScheduleProps {
     profile: ProfileData;
     shifts: ShiftsData;
     onSaveShifts: (date: Date, newShifts: Shift[]) => void;
+    onSaveAbsence: (startDate: string, endDate: string, reason: NonNullable<Shift['absenceReason']>) => void;
     payPeriods: PayPeriod[];
     allStatHolidays: Record<string, string>;
     isSaving: boolean;
 }
-const WorkSchedule = React.memo(({ profile, shifts, onSaveShifts, payPeriods, allStatHolidays, isSaving }: WorkScheduleProps) => {
+const WorkSchedule = React.memo(({ profile, shifts, onSaveShifts, onSaveAbsence, payPeriods, allStatHolidays, isSaving }: WorkScheduleProps) => {
     const [isEditorOpen, setIsEditorOpen] = useState(false);
+    const [isAbsenceModalOpen, setIsAbsenceModalOpen] = useState(false);
     const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+    const [absenceStart, setAbsenceStart] = useState(toISODateString(new Date()));
+    const [absenceEnd, setAbsenceEnd] = useState(toISODateString(new Date()));
+    const [absenceReason, setAbsenceReason] = useState<NonNullable<Shift['absenceReason']>>('GI');
 
     const initialPayPeriodIndex = useMemo(() => getCurrentPayPeriodIndex(payPeriods), [payPeriods]);
     const [selectedYear, setSelectedYear] = useState(payPeriods[initialPayPeriodIndex].year);
@@ -1314,10 +1319,16 @@ const WorkSchedule = React.memo(({ profile, shifts, onSaveShifts, payPeriods, al
         handleNavigation(selectedYear, ppInYear);
     };
 
+    const openAbsenceModal = (reason: NonNullable<Shift['absenceReason']>) => {
+        setAbsenceReason(reason);
+        setIsAbsenceModalOpen(true);
+    };
+
     return (
         <div>
             <div className="schedule-header">
                 <h2>Work Schedule</h2>
+                <button className="secondary-btn" onClick={() => setIsAbsenceModalOpen(true)}>Add General Illness or WCB</button>
                 <div className="schedule-nav">
                     <label htmlFor="year-nav">Year</label>
                     <select id="year-nav" value={selectedYear} onChange={handleYearChange}>
@@ -1333,6 +1344,17 @@ const WorkSchedule = React.memo(({ profile, shifts, onSaveShifts, payPeriods, al
                     </select>
                 </div>
             </div>
+            <section className="schedule-absence-actions" aria-labelledby="time-off-heading">
+                <div>
+                    <h3 id="time-off-heading">Unpaid Time Off</h3>
+                    <p>Add a date or date range. Scheduled shifts in that range will be removed from gross pay.</p>
+                </div>
+                <div className="schedule-absence-buttons">
+                    <button type="button" onClick={() => openAbsenceModal('GI')}>Add General Illness (GI)</button>
+                    <button type="button" className="secondary-btn" onClick={() => openAbsenceModal('WCB')}>Add WCB</button>
+                    <button type="button" className="secondary-btn" onClick={() => openAbsenceModal('Other Illness')}>Add Other Illness</button>
+                </div>
+            </section>
             {payPeriodsForYear.map(pp => (
                 <div key={pp.number} id={`pay-period-${pp.number}`} className="pay-period-container">
                     <h3>Pay Period {pp.payPeriodOfYear} ({pp.year}) | {pp.start.toLocaleDateString()} - {pp.end.toLocaleDateString()}</h3>
@@ -1382,6 +1404,40 @@ const WorkSchedule = React.memo(({ profile, shifts, onSaveShifts, payPeriods, al
                     onSave={handleEditorSave}
                     isSaving={isSaving}
                 />
+            </Modal>
+            <Modal isOpen={isAbsenceModalOpen} onClose={() => setIsAbsenceModalOpen(false)} title="Add Unpaid Illness or WCB">
+                <form onSubmit={(event) => {
+                    event.preventDefault();
+                    onSaveAbsence(absenceStart, absenceEnd, absenceReason);
+                    setIsAbsenceModalOpen(false);
+                }}>
+                    <p className="card-description">Scheduled regular shifts in this inclusive date range will be removed from gross salary.</p>
+                    <div className="absence-date-grid">
+                        <div className="form-group">
+                            <label htmlFor="absence-start">First day off</label>
+                            <input id="absence-start" type="date" value={absenceStart} onChange={event => {
+                                setAbsenceStart(event.target.value);
+                                if (event.target.value > absenceEnd) setAbsenceEnd(event.target.value);
+                            }} required />
+                        </div>
+                        <div className="form-group">
+                            <label htmlFor="absence-end">Last day off</label>
+                            <input id="absence-end" type="date" min={absenceStart} value={absenceEnd} onChange={event => setAbsenceEnd(event.target.value)} required />
+                        </div>
+                    </div>
+                    <div className="form-group">
+                        <label htmlFor="absence-reason">Type</label>
+                        <select id="absence-reason" value={absenceReason} onChange={event => setAbsenceReason(event.target.value as NonNullable<Shift['absenceReason']>)}>
+                            <option value="GI">General Illness (GI)</option>
+                            <option value="WCB">WCB</option>
+                            <option value="Other Illness">Other Illness</option>
+                        </select>
+                    </div>
+                    <div className="editor-footer">
+                        <button type="button" className="cancel-btn" onClick={() => setIsAbsenceModalOpen(false)}>Cancel</button>
+                        <button type="submit" className="save-btn" disabled={isSaving || absenceEnd < absenceStart}>{isSaving ? 'Saving...' : 'Add Time Off'}</button>
+                    </div>
+                </form>
             </Modal>
         </div>
     );
@@ -2265,7 +2321,11 @@ const App = () => {
 
     const [currentPage, setPage] = useState(() => {
         const savedPage = localStorage.getItem('acs-salary-current-page');
+ codex/remove-taxation-features-from-the-app-i3idjy
         return ['dashboard', 'schedule', 'timeoff', 'ledger', 'profile'].includes(savedPage || '') ? savedPage! : 'dashboard';
+
+        return ['dashboard', 'schedule', 'ledger', 'profile'].includes(savedPage || '') ? savedPage! : 'dashboard';
+main
     });
     const [isSidebarOpen, setSidebarOpen] = useState(false);
     const [theme, setTheme] = useState(() => localStorage.getItem("acs-salary-theme") || "dark");
@@ -2449,6 +2509,7 @@ const App = () => {
         }
     };
 
+codex/remove-taxation-features-from-the-app-i3idjy
     const removeAbsenceRangeFrom = (data: ShiftsData, range: AbsenceRange) => {
         const updated = { ...data };
         const start = new Date(`${range.startDate}T00:00:00`);
@@ -2477,13 +2538,27 @@ const App = () => {
 
     const handleSaveAbsence = async (original: AbsenceRange | null, updatedRange: AbsenceRange) => {
         const { startDate, endDate, reason } = updatedRange;
+
+    const handleSaveAbsence = async (startDate: string, endDate: string, reason: NonNullable<Shift['absenceReason']>) => {
+main
         if (!user || !startDate || !endDate || endDate < startDate) return;
         const start = new Date(`${startDate}T00:00:00`);
         const end = new Date(`${endDate}T00:00:00`);
         const numberOfDays = Math.round((end.getTime() - start.getTime()) / 86400000) + 1;
+ codex/remove-taxation-features-from-the-app-i3idjy
         if (numberOfDays < 1 || numberOfDays > 730) return alert('Please select a period of 730 days or fewer.');
 
         const updatedShifts = original ? removeAbsenceRangeFrom(shifts, original) : { ...shifts };
+
+        if (numberOfDays < 1 || numberOfDays > 730) {
+            alert('Please select an illness period of 730 days or fewer.');
+            return;
+        }
+
+        setIsSavingData(true);
+        setSavingMessage('Saving time off...');
+        const updatedShifts = { ...shifts };
+main
         for (let offset = 0; offset < numberOfDays; offset++) {
             const date = addDays(start, offset);
             updatedShifts[toISODateString(date)] = [{
@@ -2491,11 +2566,22 @@ const App = () => {
                 isBookedOff: true, absenceReason: reason
             }];
         }
+ codex/remove-taxation-features-from-the-app-i3idjy
         await persistTimeOff(updatedShifts);
     };
 
     const handleRemoveAbsence = async (range: AbsenceRange) => {
         await persistTimeOff(removeAbsenceRangeFrom(shifts, range));
+
+        setShifts(updatedShifts);
+        try {
+            await api.saveUserData(user.uid, { shifts: updatedShifts });
+        } catch (error) {
+            console.error('Failed to save time off:', error);
+        } finally {
+            setIsSavingData(false);
+        }
+ main
     };
     
     const handleSaveCashedOutHours = async (year: number, ppNumber: number, hours: number) => {
@@ -2547,9 +2633,13 @@ const App = () => {
             case 'dashboard':
                 return <Dashboard profile={profile} allCalculatedData={allCalculatedData} onSaveCashedOutHours={handleSaveCashedOutHours} payPeriods={payPeriods} />;
             case 'schedule':
+codex/remove-taxation-features-from-the-app-i3idjy
                 return <WorkSchedule profile={profile} shifts={shifts} onSaveShifts={handleSaveShifts} payPeriods={payPeriods} allStatHolidays={allStatHolidays} isSaving={isSavingData}/>;
             case 'timeoff':
                 return <UnpaidTimeOff shifts={shifts} isSaving={isSavingData} onSave={handleSaveAbsence} onRemove={handleRemoveAbsence} />;
+
+                return <WorkSchedule profile={profile} shifts={shifts} onSaveShifts={handleSaveShifts} onSaveAbsence={handleSaveAbsence} payPeriods={payPeriods} allStatHolidays={allStatHolidays} isSaving={isSavingData}/>;
+ main
             case 'ledger':
                 return <Ledger profile={profile} allCalculatedData={allCalculatedData} onSaveCashedOutHours={handleSaveCashedOutHours} onSaveManualBankedHours={handleSaveManualBankedHours} />;
             case 'profile':

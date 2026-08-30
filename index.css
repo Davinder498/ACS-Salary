@@ -876,6 +876,27 @@ input:focus, select:focus {
   flex-grow: 0;
   min-width: 80px;
 }
+.schedule-absence-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+  padding: 1.25rem;
+  border: 1px solid var(--border-color);
+  border-left: 4px solid var(--accent-primary);
+  border-radius: 10px;
+  background: var(--background-secondary);
+}
+.schedule-absence-actions h3 { margin-bottom: 0.35rem; }
+.schedule-absence-actions p { color: var(--text-secondary); line-height: 1.45; }
+.schedule-absence-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.65rem;
+  flex-shrink: 0;
+}
 .pay-period-container {
   padding-top: 2rem;
   margin-top: -1px; /* Overlap border */
@@ -1325,6 +1346,14 @@ input:focus, select:focus {
     .schedule-nav label {
         margin-left: 0 !important;
     }
+    .schedule-absence-actions {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .schedule-absence-buttons {
+        flex-direction: column;
+    }
+    .schedule-absence-buttons button { width: 100%; }
     .calendar-weekday-header {
         display: none;
     }
@@ -1449,6 +1478,7 @@ input:focus, select:focus {
   .absence-date-grid,
   .partial-hours-grid { grid-template-columns: 1fr; gap: 0; }
 }
+codex/remove-taxation-features-from-the-app-i3idjy
 
 /* --- Unpaid Time Off Page --- */
 .time-off-page-header {
@@ -1481,3 +1511,5 @@ input:focus, select:focus {
   .time-off-page-header button,
   .time-off-row-actions button { flex: 1; }
 }
+
+main
