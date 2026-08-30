@@ -646,7 +646,6 @@ input:focus, select:focus {
   border-left: 2px solid var(--border-color);
 }
 .deferred-breakdown-list.earnings { border-left-color: var(--added-color); }
-.deferred-breakdown-list.deductions { border-left-color: var(--removed-color); }
 
 .deferred-breakdown-list .card-item {
   border-bottom: 1px dashed var(--border-color);
@@ -663,65 +662,6 @@ input:focus, select:focus {
 .deferred-breakdown-list .card-item span:first-child {
   color: var(--text-secondary);
 }
-
-/* --- Net Pay Toggle --- */
-.net-pay-toggle {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-}
-.net-pay-toggle span {
-    font-size: 0.9em;
-    color: var(--text-secondary);
-    font-weight: 500;
-    transition: color 0.2s;
-}
-.net-pay-toggle span.active {
-    color: var(--text-primary);
-}
-.switch-container {
-    position: relative;
-    display: inline-block;
-    width: 44px;
-    height: 24px;
-}
-.switch-container input {
-    opacity: 0;
-    width: 0;
-    height: 0;
-}
-.slider {
-    position: absolute;
-    cursor: pointer;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: var(--background-tertiary);
-    border: 1px solid var(--border-color);
-    transition: .4s;
-}
-.slider:before {
-    position: absolute;
-    content: "";
-    height: 16px;
-    width: 16px;
-    left: 3px;
-    bottom: 3px;
-    background-color: var(--text-secondary);
-    transition: .4s;
-}
-input:checked + .slider {
-    background-color: var(--accent-primary);
-    border-color: var(--accent-primary);
-}
-input:checked + .slider:before {
-    transform: translateX(20px);
-    background-color: white;
-}
-.slider.round { border-radius: 34px; }
-.slider.round:before { border-radius: 50%; }
-
 
 /* --- Ledger Card & Page Specifics --- */
 .ledger-card {
@@ -907,84 +847,6 @@ input:checked + .slider:before {
 .work-cycle-pattern-item {
     margin-bottom: 0;
 }
-.deductions-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1.5rem 1.5rem; /* Increased vertical gap */
-}
-.other-deductions-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-    margin-bottom: 1rem;
-}
-.other-deduction-item {
-    display: flex;
-    gap: 0.75rem;
-    align-items: center;
-}
-.other-deduction-item .other-deduction-name {
-    flex: 2 1 0%;
-}
-.other-deduction-item .input-with-toggle {
-    flex: 1 1 0%;
-    min-width: 150px;
-}
-.remove-deduction-btn {
-    background: none;
-    border: 1px solid var(--border-color);
-    color: var(--text-secondary);
-    padding: 0.5rem;
-    border-radius: 6px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: none;
-    width: 36px;
-    height: 36px;
-}
-.remove-deduction-btn:hover {
-    background-color: var(--danger-color);
-    color: white;
-    border-color: var(--danger-color);
-    transform: none;
-}
-.remove-deduction-btn svg {
-    width: 16px;
-    height: 16px;
-}
-
-.deduction-input-group .form-group {
-    margin-bottom: 0;
-}
-.input-with-toggle {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-}
-.input-with-toggle input {
-    flex-grow: 1;
-}
-.unit-toggle-btn {
-    flex-shrink: 0;
-    width: 40px;
-    height: 40px;
-    padding: 0;
-    font-weight: bold;
-    font-size: 1.1rem;
-    background: var(--background-tertiary);
-    color: var(--text-primary);
-    border: 1px solid var(--border-color);
-    box-shadow: var(--shadow-sm);
-}
-.unit-toggle-btn:hover {
-    background: var(--background-primary);
-    transform: none;
-    border-color: var(--accent-primary);
-}
-
-
-/* --- Work Schedule --- */
 .schedule-header {
   display: flex;
   justify-content: space-between;
@@ -1490,9 +1352,6 @@ input:checked + .slider:before {
         grid-template-columns: repeat(2, 1fr);
         gap: 1rem;
     }
-    .deductions-grid {
-        grid-template-columns: 1fr;
-    }
     .ledger-header {
         display: none;
     }
@@ -1573,4 +1432,52 @@ input:checked + .slider:before {
         border-left: 3px solid var(--accent-primary);
         padding-left: calc(1rem - 3px);
     }
+}
+
+/* Time-off and partial-overtime enhancements */
+.absence-date-grid,
+.partial-hours-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+.shift-badge.is-absence {
+  background: var(--danger-color);
+  border-color: rgba(255, 255, 255, 0.45);
+}
+@media (max-width: 520px) {
+  .absence-date-grid,
+  .partial-hours-grid { grid-template-columns: 1fr; gap: 0; }
+}
+
+/* --- Unpaid Time Off Page --- */
+.time-off-page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+.time-off-page-header h2 { margin-bottom: 0.35rem; }
+.time-off-page-header p { color: var(--text-secondary); }
+.time-off-list { display: flex; flex-direction: column; }
+.time-off-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 0;
+  border-bottom: 1px solid var(--border-color);
+}
+.time-off-row:last-child { border-bottom: 0; }
+.time-off-row strong,
+.time-off-row span { display: block; }
+.time-off-row span { margin-top: 0.25rem; color: var(--text-secondary); }
+.time-off-row-actions { display: flex; gap: 0.5rem; }
+.empty-state { padding: 2rem 1rem; text-align: center; color: var(--text-secondary); }
+.empty-state h3 { margin-bottom: 0.5rem; color: var(--text-primary); }
+@media (max-width: 600px) {
+  .time-off-page-header,
+  .time-off-row { align-items: stretch; flex-direction: column; }
+  .time-off-page-header button,
+  .time-off-row-actions button { flex: 1; }
 }
