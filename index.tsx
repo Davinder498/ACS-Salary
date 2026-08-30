@@ -1218,6 +1218,11 @@ const WorkSchedule = React.memo(({ profile, shifts, onSaveShifts, onSaveAbsence,
         handleNavigation(selectedYear, ppInYear);
     };
 
+    const openAbsenceModal = (reason: NonNullable<Shift['absenceReason']>) => {
+        setAbsenceReason(reason);
+        setIsAbsenceModalOpen(true);
+    };
+
     return (
         <div>
             <div className="schedule-header">
@@ -1238,6 +1243,17 @@ const WorkSchedule = React.memo(({ profile, shifts, onSaveShifts, onSaveAbsence,
                     </select>
                 </div>
             </div>
+            <section className="schedule-absence-actions" aria-labelledby="time-off-heading">
+                <div>
+                    <h3 id="time-off-heading">Unpaid Time Off</h3>
+                    <p>Add a date or date range. Scheduled shifts in that range will be removed from gross pay.</p>
+                </div>
+                <div className="schedule-absence-buttons">
+                    <button type="button" onClick={() => openAbsenceModal('GI')}>Add General Illness (GI)</button>
+                    <button type="button" className="secondary-btn" onClick={() => openAbsenceModal('WCB')}>Add WCB</button>
+                    <button type="button" className="secondary-btn" onClick={() => openAbsenceModal('Other Illness')}>Add Other Illness</button>
+                </div>
+            </section>
             {payPeriodsForYear.map(pp => (
                 <div key={pp.number} id={`pay-period-${pp.number}`} className="pay-period-container">
                     <h3>Pay Period {pp.payPeriodOfYear} ({pp.year}) | {pp.start.toLocaleDateString()} - {pp.end.toLocaleDateString()}</h3>
@@ -1422,14 +1438,13 @@ const ShiftEditor = ({ shiftsForDate, onClose, onSave, isSaving }: ShiftEditorPr
                                 id={`shift-category-${index}`} 
                                 value={shift.category} 
                                 onChange={e => handleShiftChange(index, 'category', e.target.value as Shift['category'])}
-                                disabled={isAnotherRegularShiftPresent && shift.category !== 'Regular'}
                             >
-                               <option value="Regular">Regular</option>
+                               <option value="Regular" disabled={isAnotherRegularShiftPresent}>Regular</option>
                                <option value="First Overtime">First Overtime</option>
                                <option value="Second Overtime">Second Overtime</option>
                                <option value="Partial Overtime">Partial Hours</option>
                            </select>
-                           {isAnotherRegularShiftPresent && shift.category !== 'Regular' && <p className="checkbox-note">Only one Regular shift is allowed.</p>}
+                           {isAnotherRegularShiftPresent && <p className="checkbox-note">Overtime and partial hours can be added alongside the regular shift.</p>}
                         </div>
                         <div className="form-group">
                            <label htmlFor={`shift-type-${index}`}>Shift Type</label>
