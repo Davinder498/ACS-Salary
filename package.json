@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
-    "test": "npm run typecheck",
+    "test": "npm run typecheck && node --test tests/payroll.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

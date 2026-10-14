@@ -461,6 +461,8 @@ const calculateEarningsForPeriod = (payPeriod: PayPeriod | null, allShifts: Shif
         const isoDate = toISODateString(date);
         
         const shiftsToProcess = getEffectiveShiftsForDate(date, allShifts, profile);
+        const regularShift = shiftsToProcess.find(shift => shift.category === 'Regular' && shift.type !== 'O');
+        const overtimeDifferentialType = regularShift && !regularShift.isBookedOff ? regularShift.type : 'O';
         const absence = allShifts[isoDate]?.find(shift => shift.type === 'O' && shift.absenceReason);
         if (absence && getScheduledShiftType(date, profile) !== 'O') unpaidRegularHours += 7.75;
         
@@ -537,19 +539,24 @@ const calculateEarningsForPeriod = (payPeriod: PayPeriod | null, allShifts: Shif
                 }
             }
             
-            // --- Shift differentials stack with regular and overtime earnings. ---
+            // Regular shifts keep their own eligibility; overtime is an extension of the regular shift.
             if (!shift.isBookedOff) {
-                if (shift.type === 'A') {
+                const differentialType = shift.category === 'Regular' ? shift.type : overtimeDifferentialType;
+                if (differentialType === 'A') {
                     deferred.afternoon.hours += premiumHours;
                     deferred.afternoon.pay += premiumHours * 2.75;
                 }
-                if (shift.type === 'N') {
+                if (differentialType === 'N') {
                     deferred.night.hours += premiumHours;
                     deferred.night.pay += premiumHours * 5.00;
                 }
                 
                 const dayOfWeek = date.getDay();
-                const isWeekendShift = (dayOfWeek === 6) || (dayOfWeek === 0) || (dayOfWeek === 5 && shift.type === 'A') || (dayOfWeek === 1 && shift.type === 'N');
+                const isWeekendShift = differentialType !== 'O' && (
+                    dayOfWeek === 6 || dayOfWeek === 0 ||
+                    (dayOfWeek === 5 && differentialType === 'A') ||
+                    (dayOfWeek === 1 && differentialType === 'N')
+                );
                 if (isWeekendShift) {
                    deferred.weekend.hours += premiumHours;
                    deferred.weekend.pay += premiumHours * 3.25;
@@ -1503,7 +1510,7 @@ const ShiftEditor = ({ shiftsForDate, onClose, onSave, isSaving }: ShiftEditorPr
                                <option value="N">Late Night Shift</option>
                                <option value="O">Off / Clear Shift</option>
                            </select>
-                           {shift.category !== 'Regular' && <p className="checkbox-note">Select the shift worked so its Night, Late Night, and weekend premiums are included.</p>}
+                           {shift.category !== 'Regular' && <p className="checkbox-note">Overtime receives the Night, Late Night, and weekend premiums eligible for your regular shift on this date. No regular shift means no shift premiums.</p>}
                         </div>
                         {shift.category === 'Partial Overtime' && (
                             <div className="partial-hours-grid">
